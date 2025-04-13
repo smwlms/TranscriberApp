@@ -1,0 +1,27 @@
+{
+    "name": "transcriber-frontend",
+    "private": true,
+    "version": "0.1.0",
+    "type": "module",
+    "scripts": {
+      "dev": "vite",
+      "build": "vite build",
+      "preview": "vite preview",
+      "lint": "eslint .",
+      "format": "prettier --write ."
+    },
+    "devDependencies": {
+      "@sveltejs/vite-plugin-svelte": "^3.1.1",
+      "autoprefixer": "^10.4.19",
+      "eslint": "^9.8.0",
+      "eslint-plugin-svelte": "^2.43.0",
+      "postcss": "^8.4.40",
+      "prettier": "^3.3.3",
+      "prettier-plugin-svelte": "^3.2.6",
+      "tailwindcss": "^3.4.7",
+      "vite": "^5.3.5"
+    },
+    "dependencies": {
+      "svelte": "^4.2.18"
+    }
+  }

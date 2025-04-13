@@ -1,0 +1,44 @@
+# Environment variables
+.env
+
+# Virtual environment
+venv/
+.venv/
+
+# Python cache and byte code
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Log files
+logs/
+
+# Data directories (
+audio/
+transcripts/
+results/
+
+# Configuration file (user-specific, generate from schema)
+config.yaml
+
+# Database files
+*.db
+*.db-journal*
+
+# Temporary files
+*__????????_temp.wav # Pattern for temp WAV files from transcriber.py
+
+# OS-specific files
+*.DS_Store # macOS
+Thumbs.db # Windows
+
+# IDE / Editor specific files
+.vscode/
+.idea/
+*.swp
