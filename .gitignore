@@ -41,4 +41,4 @@ Thumbs.db # Windows
 # IDE / Editor specific files
 .vscode/
 .idea/
-*.swp
+*.swp.DS_Store
