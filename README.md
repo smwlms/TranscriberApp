@@ -27,7 +27,7 @@ A local web application for transcribing and analyzing audio files using local A
 
 ## Demo / Screenshot
 
-![Dashboard Screenshot](./assets/Dashboard_V1.png)
+![Dashboard Screenshot](./assets/dashboard_V1_dark_mode.png)
 
 ## Requirements
 
