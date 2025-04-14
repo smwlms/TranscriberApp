@@ -1,46 +1,41 @@
 // src/lib/stores.js
 import { writable, readable } from 'svelte/store';
 
-// Store for configuration schema and available models fetched from backend
+// Store for configuration schema, available models, and detected device
 export const configInfo = writable({
-    schema: {}, // Will hold the UI-friendly schema structure
-    available_models: [] // Will hold the list of local Ollama models
+    schema: {},
+    available_models: [],
+    detected_device: null // <-- Add field for detected device (e.g., 'mps', 'cuda', 'cpu')
 });
 
 // Store for the current job state being monitored
 export const currentJob = writable({
-    job_id: null,           // ID of the currently running/monitored job
-    status: null,           // e.g., "QUEUED", "RUNNING", "COMPLETED", "FAILED"
-    progress: 0,            // Progress percentage (0-100)
-    logs: [],               // Array of log entries [timestamp, level, message]
-    result: null,           // Final result data on completion
-    error_message: null,    // Error message on failure
+    job_id: null,
+    status: null,
+    progress: 0,
+    logs: [],
+    result: null,
+    error_message: null,
     stop_requested: false,
-    // We can add other relevant fields here as needed
-    relative_audio_path: null // Store path of uploaded file for starting pipeline
+    relative_audio_path: null // Stores filename only after upload success
 });
 
-// Store for user selections in the config form
-export const jobConfigOverrides = writable({}); // Store user selections here
+// Store for user selections in the config form (used as overrides)
+export const jobConfigOverrides = writable({});
 
-// Simple store to track if the backend config has been loaded
+// Simple store to track if the initial backend config has been loaded
 export const configLoaded = writable(false);
 
-// Store for API base URL (useful if prefix changes or for production)
-// We use /api/v1 which is proxied by Vite dev server
-export const apiBaseUrl = readable('/api/v1');
+// Store for API base URL
+export const apiBaseUrl = readable('/api/v1'); // Proxied by Vite dev server
 
-// Function to reset the current job state (e.g., for starting a new job)
+// Function to reset the current job state
 export function resetCurrentJob() {
     currentJob.set({
-        job_id: null,
-        status: null,
-        progress: 0,
-        logs: [],
-        result: null,
-        error_message: null,
-        stop_requested: false,
-        relative_audio_path: null
+        job_id: null, status: null, progress: 0, logs: [], result: null,
+        error_message: null, stop_requested: false, relative_audio_path: null
     });
-    jobConfigOverrides.set({}); // Also reset user selections
+    // Reset overrides? Maybe not, user might want to keep settings for next run
+    // jobConfigOverrides.set({});
+    console.log('[Store] Current job state reset.');
 }
