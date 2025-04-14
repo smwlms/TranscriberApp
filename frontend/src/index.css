@@ -1,11 +1,9 @@
-/* Import Tailwind CSS directives */
+/* src/index.css */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Optional: Add any custom global base styles below */
-/* Example:
+/* Add global base styles with dark mode variants */
 body {
-  @apply font-sans antialiased text-gray-800 bg-gray-50;
+  @apply bg-gray-50 text-gray-900 dark:bg-slate-900 dark:text-slate-100 transition-colors duration-150;
 }
-*/

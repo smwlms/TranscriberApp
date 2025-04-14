@@ -1,6 +1,6 @@
 <script>
     import { configInfo, jobConfigOverrides } from '../stores.js';
-    import { tick } from 'svelte'; // Import tick for async updates
+    import { tick, onDestroy } from 'svelte';
   
     // Reactive variables based on the store
     let schema = {};
@@ -14,22 +14,21 @@
     });
     const unsubscribeOverrides = jobConfigOverrides.subscribe(value => {
         // Sync local state when store changes (e.g., on reset)
-        // Avoid infinite loops by checking if values differ significantly
         if (JSON.stringify(overrides) !== JSON.stringify(value)) {
-           overrides = { ...value }; // Update local copy from store
+           overrides = { ...value };
         }
     });
   
     // --- Define Compatibility Rules ---
     const COMPATIBILITY_RULES = {
-        mps: ['int8', 'float32', 'int16'], // Common MPS compatible types (float32 might be slow)
-        cuda: ['float16', 'bfloat16', 'int8', 'float32', 'int16'], // Most types usually work on CUDA
-        cpu: ['int8', 'float32', 'int16'], // Common CPU types
+        mps: ['int8', 'float32', 'int16'],
+        cuda: ['float16', 'bfloat16', 'int8', 'float32', 'int16'],
+        cpu: ['int8', 'float32', 'int16'],
         unknown: ['int8', 'float16', 'int16', 'bfloat16', 'float32'], // Show all if detection failed
-        error: ['int8', 'float16', 'int16', 'bfloat16', 'float32'], // Show all if detection failed
+        error: ['int8', 'float16', 'int16', 'bfloat16', 'float32'], // Show all on error
     };
   
-    // --- Reactive Calculation for Available Compute Types ---
+    // --- Reactive Calculation for Available Compute Types & Default Adjustment ---
     let availableComputeTypes = [];
     $: {
         if (schema?.compute_type?.options && detectedDevice) {
@@ -38,29 +37,19 @@
             log(`Device: ${detectedDevice}. Available compute types:`, availableComputeTypes);
   
             // --- Adjust Initial/Default Override Value ---
-            // Run this reactively after schema and device info are loaded
             const currentComputeOverride = $jobConfigOverrides['compute_type'];
             const schemaDefault = schema?.compute_type?.default;
   
-            // If the current override is not available OR if no override is set yet
-            // and the schema default is not available, pick the first available type.
             if ((currentComputeOverride && !availableComputeTypes.includes(currentComputeOverride)) ||
-                (!currentComputeOverride && schemaDefault && !availableComputeTypes.includes(schemaDefault)))
-            {
-                const newDefault = availableComputeTypes.length > 0 ? availableComputeTypes[0] : schemaDefault; // Fallback to schema default if available list empty
+                (!currentComputeOverride && schemaDefault && !availableComputeTypes.includes(schemaDefault))) {
+                const newDefault = availableComputeTypes.length > 0 ? availableComputeTypes[0] : schemaDefault;
                 if (newDefault !== currentComputeOverride) {
-                    log(`Adjusting compute_type default/override. Schema default '${schemaDefault}' or current '${currentComputeOverride}' not available for device '${detectedDevice}'. Setting to '${newDefault}'.`);
-                    // Use tick to ensure this update happens after initial store hydration
-                    tick().then(() => {
-                        jobConfigOverrides.update(o => ({ ...o, compute_type: newDefault }));
-                    });
+                    log(`Adjusting compute_type default/override. Setting to '${newDefault}'.`);
+                    tick().then(() => { jobConfigOverrides.update(o => ({ ...o, compute_type: newDefault })); });
                 }
-            }
-            // If no override is set yet, but schema default *is* available, set it
-            else if (!currentComputeOverride && schemaDefault && availableComputeTypes.includes(schemaDefault)) {
-                 tick().then(() => {
-                      jobConfigOverrides.update(o => ({ ...o, compute_type: schemaDefault }));
-                 });
+            } else if (!currentComputeOverride && schemaDefault && availableComputeTypes.includes(schemaDefault)) {
+                 // Initialize with schema default if it's available and not set yet
+                 tick().then(() => { jobConfigOverrides.update(o => ({ ...o, compute_type: schemaDefault })); });
             }
         } else {
             // Fallback if schema/device not loaded yet
@@ -68,101 +57,87 @@
         }
     }
   
-    // Initialize overrides with defaults when schema loads
-    // Use a reactive statement to trigger once schema is populated
+    // --- Initialize overrides with defaults when schema loads ---
     let initialized = false;
     $: {
-        if (!initialized && schema && Object.keys(schema).length > 0 && Object.keys(overrides).length === 0) {
+        // Check store directly to see if it's already populated
+        if (!initialized && schema && Object.keys(schema).length > 0 && Object.keys($jobConfigOverrides).length === 0) {
             const initialOverrides = {};
             const simpleTypes = ["string", "integer", "float", "bool", "enum"];
             for (const key in schema) {
                 if (schema[key]?.default !== undefined && simpleTypes.includes(schema[key].type)) {
-                    // Special case: Don't set compute_type here yet, let the reactive block above handle it
+                    // Exclude compute_type initially, it's handled reactively above
                     if (key !== 'compute_type') {
                        initialOverrides[key] = schema[key].default;
                     }
                 }
             }
-            jobConfigOverrides.set(initialOverrides);
-            log('Initialized overrides with defaults (excluding compute_type initially):', initialOverrides);
-            initialized = true; // Prevent re-initialization
+            // Only set if initialOverrides has actual values
+            if (Object.keys(initialOverrides).length > 0) {
+                  jobConfigOverrides.set(initialOverrides);
+                  log('Initialized overrides with defaults (excluding compute_type initially):', initialOverrides);
+            }
+            initialized = true; // Mark as initialized
         }
     }
   
-  
-    // --- Update Store on Input Change ---
-    function handleInputChange(key, value) {
-        // Update the central store whenever a local input changes
-        // This could be done directly with bind:value={$jobConfigOverrides[key]}
-        // but having a handler allows for potential validation later.
-        jobConfigOverrides.update(currentOverrides => ({
-            ...currentOverrides,
-            [key]: value
-        }));
-    }
-    // We'll use bind:value directly for simplicity now. Remove handleInputChange if not needed.
-  
     // --- Utility Functions ---
-    function formatLabel(key) { /* ... unchanged ... */ }
+    function formatLabel(key) { return key.replace(/_/g, ' ').replace(/([A-Z])/g, ' $1').replace(/^./, (str) => str.toUpperCase()); }
     function log(...args) { console.log('[ConfigForm]', ...args); }
-    import { onDestroy } from 'svelte'; // Need onDestroy for cleanup
     onDestroy(() => { unsubscribeConfig(); unsubscribeOverrides(); }); // Cleanup subscriptions
   
-    // Define which types should have input controls generated
+    // --- Component Configuration ---
     const editableTypes = ["string", "integer", "float", "bool", "enum"];
-    const excludedKeys = ["input_audio", "intermediate_transcript_path", "llm_models", "hf_token"];
+    // Exclude keys handled elsewhere or too complex for this form
+    const excludedKeys = ["input_audio", "intermediate_transcript_path", "llm_models", "hf_token", "llm_default_timeout", "llm_final_analysis_timeout"];
   
   </script>
   
-  <div class="bg-white p-6 rounded-lg shadow-md">
-    <h2 class="text-xl font-semibold mb-4 text-gray-700">2. Configure Pipeline</h2>
+  <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md transition-colors duration-150">
+    <h2 class="text-xl font-semibold mb-4 text-gray-700 dark:text-gray-200">2. Configure Pipeline</h2>
   
     {#if !schema || Object.keys(schema).length === 0}
-      <p class="text-gray-500 italic">Loading configuration options...</p>
+      <p class="text-gray-500 dark:text-gray-400 italic">Loading configuration options...</p>
     {:else}
       <form class="space-y-4">
-        {#each Object.entries(schema) as [key, spec] (key)} <!-- Add key to each block -->
+        {#each Object.entries(schema) as [key, spec] (key)}
           {#if editableTypes.includes(spec.type) && !excludedKeys.includes(key)}
-            <div class="flex flex-col border-b border-gray-200 pb-3 last:border-b-0">
-              <label for={key} class="block text-sm font-medium text-gray-700 mb-1">
+            <div class="flex flex-col border-b border-gray-200 dark:border-gray-700 pb-3 last:border-b-0 transition-colors duration-150">
+              <label for={key} class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 {formatLabel(key)} {#if key === 'compute_type' && detectedDevice}(Detected: {detectedDevice || 'N/A'}){/if}
               </label>
   
-              <!-- Render different input based on schema type -->
               {#if spec.type === 'enum'}
-                <select {key} bind:value={$jobConfigOverrides[key]} class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
-                   <!-- !! Use FILTERED list for compute_type !! -->
+                <select id={key} bind:value={$jobConfigOverrides[key]} class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm transition-colors duration-150 appearance-none">
                    {#if key === 'compute_type'}
-                      {#each availableComputeTypes as option (option)} <option {option}>{option}</option> {/each}
+                      {#each availableComputeTypes as option (option)} <option value={option}>{option}</option> {/each}
                    {:else}
-                      {#each spec.options || [] as option (option)} <option {option}>{option}</option> {/each}
+                      {#each spec.options || [] as option (option)} <option value={option}>{option}</option> {/each}
                    {/if}
                 </select>
-  
               {:else if spec.type === 'bool'}
-                <input {key} type="checkbox" bind:checked={$jobConfigOverrides[key]} class="mt-1 h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500">
-  
-              {:else if spec.type === 'integer'}
-                <input {key} type="number" step="1" bind:value={$jobConfigOverrides[key]} placeholder="Default: {spec.default}" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
-  
-              {:else if spec.type === 'float'}
-                 <input {key} type="number" step="any" bind:value={$jobConfigOverrides[key]} placeholder="Default: {spec.default}" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
-  
+                <input id={key} type="checkbox" bind:checked={$jobConfigOverrides[key]} class="mt-1 h-4 w-4 text-indigo-600 border-gray-300 dark:border-gray-500 rounded focus:ring-indigo-500 bg-white dark:bg-gray-700 transition-colors duration-150">
+              {:else if spec.type === 'integer' || spec.type === 'float'}
+                <input id={key} type="number" step={spec.type === 'integer' ? '1' : 'any'} bind:value={$jobConfigOverrides[key]} placeholder="Default: {spec.default}" class="mt-1 block w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm transition-colors duration-150">
               {:else if key === 'extra_context_prompt'}
-                  <textarea {key} rows="3" bind:value={$jobConfigOverrides[key]} placeholder="Optional: Provide extra context for LLM analysis..." class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"></textarea>
-  
+                  <textarea id={key} rows="3" bind:value={$jobConfigOverrides[key]} placeholder="Optional: Provide extra context..." class="mt-1 block w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm transition-colors duration-150"></textarea>
               {:else if spec.type === 'string'}
-                 {#if key === 'language'}
-                   <input {key} type="text" bind:value={$jobConfigOverrides[key]} placeholder="e.g., 'en', 'nl' (leave empty for auto-detect)" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
-                 {:else}
-                   <input {key} type="text" bind:value={$jobConfigOverrides[key]} placeholder="Default: {spec.default}" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
-                 {/if}
+                   <input id={key} type="text" bind:value={$jobConfigOverrides[key]} placeholder={key === 'language' ? "e.g., 'en' (blank=auto)" : `Default: ${spec.default}`} class="mt-1 block w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm transition-colors duration-150">
               {/if}
   
-              {#if spec.description} <p class="mt-1 text-xs text-gray-500">{spec.description}</p> {/if}
+              {#if spec.description} <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{spec.description}</p> {/if}
             </div>
           {/if}
         {/each}
       </form>
     {/if}
   </div>
+  <style>
+      /* Base style for select arrow */
+      select {
+          background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+          background-position: right 0.5rem center; background-repeat: no-repeat; background-size: 1.5em 1.5em; padding-right: 2.5rem;
+          -webkit-print-color-adjust: exact; print-color-adjust: exact; appearance: none; -webkit-appearance: none; -moz-appearance: none;
+      }
+      /* Dark mode select arrow removed from here */
+  </style>
