@@ -2,144 +2,155 @@
 import { writable, readable, derived } from 'svelte/store';
 
 // --- Check if running in a browser environment ---
-// This works in plain Vite+Svelte without needing SvelteKit
 const browser = typeof window !== 'undefined';
 
-// --- Existing Stores ---
+// --- Logging Helpers (Browser Only) ---
+function log_store(...args) { if (browser) { console.log('[Store]', ...args); } }
+function log_theme(...args) { if (browser) { console.log('[ThemeStore]', ...args); } }
+
+// --- Application Stores ---
+
+// Holds configuration schema, available LLM models, and detected backend device
 export const configInfo = writable({
     schema: {},
     available_models: [],
-    detected_device: null // Added field for detected device
+    detected_device: null // 'mps', 'cuda', 'cpu', 'error', or 'unknown'
 });
 
+// Holds the state of the currently active or last run job
 export const currentJob = writable({
-    job_id: null, status: null, progress: 0, logs: [], result: null,
-    error_message: null, stop_requested: false, relative_audio_path: null
+    job_id: null,
+    status: null,
+    progress: 0,
+    logs: [],           // Array of [timestamp, level, message]
+    result: null,       // Object containing results on completion
+    error_message: null,
+    stop_requested: false,
+    relative_audio_path: null // Filename after successful upload
 });
 
+// Holds the user's current selections from the ConfigForm
 export const jobConfigOverrides = writable({});
+
+// Boolean flag indicating if the initial config has been fetched from the backend
 export const configLoaded = writable(false);
+
+// Base URL for backend API calls (proxied by Vite during development)
 export const apiBaseUrl = readable('/api/v1');
 
+// Function to reset the job state, e.g., before starting a new job
 export function resetCurrentJob() {
     currentJob.set({
         job_id: null, status: null, progress: 0, logs: [], result: null,
         error_message: null, stop_requested: false, relative_audio_path: null
     });
-    // Don't reset overrides by default
-    console.log('[Store] Current job state reset.');
+    // Keep jobConfigOverrides as is, user might want to reuse settings
+    log_store('Current job state reset.');
 }
 
-// --- THEME STORE (Using browser check) ---
+// --- THEME MANAGEMENT STORE ---
 
-function applyTheme(theme) {
-  if (!browser) return; // Guard: Only run in browser
+// Helper function to apply the correct class ('light' or 'dark') to the <html> element
+function applyThemeClass(themePreferenceValue) {
+  if (!browser) return; // Only run in the browser
   const root = document.documentElement;
-  root.classList.remove('light', 'dark');
-  log_theme('Attempting to apply theme:', theme); // Use helper log
+  let themeToApply = 'light'; // Default theme
 
-  if (theme === 'system') {
-    const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    root.classList.add(systemPrefersDark ? 'dark' : 'light');
-    log_theme('Applying system theme preference:', systemPrefersDark ? 'dark' : 'light');
-  } else if (theme === 'dark') {
-    root.classList.add('dark');
-    log_theme('Applying dark theme');
-  } else {
-    root.classList.add('light'); // Default to light if theme is 'light' or invalid
-    log_theme('Applying light theme');
+  if (themePreferenceValue === 'dark') {
+    themeToApply = 'dark';
+  } else if (themePreferenceValue === 'system') {
+    // Check the OS/browser preference if 'system' is selected
+    themeToApply = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   }
+  // Else: themePreferenceValue is 'light' or invalid, applies 'light'
+
+  root.classList.remove('light', 'dark'); // Remove any existing theme class
+  root.classList.add(themeToApply);      // Add the determined theme class
+  log_theme('Applied theme class to <html>:', themeToApply);
 }
 
-let initialTheme = 'light'; // Default theme
-if (browser) { // Guard all browser-specific logic
-  try {
-      const storedTheme = localStorage.getItem('theme');
-      if (storedTheme && ['light', 'dark', 'system'].includes(storedTheme)) {
-        initialTheme = storedTheme;
-      } else {
-        // If no valid theme stored, default to 'system'
-        initialTheme = 'system';
-        // Store 'system' as the preference if nothing was set before
-        localStorage.setItem('theme', 'system');
-      }
-  } catch (e) {
-      console.error("Error accessing localStorage for theme:", e);
-      initialTheme = 'system'; // Fallback safely to system if localStorage fails
-  }
-}
-
-// Writable store for theme preference ('light', 'dark', 'system')
-export const theme = writable(initialTheme);
-
-// Subscribe to theme changes ONLY in the browser
+// Determine the initial theme preference on load
+let initialUserThemePreference = 'system'; // Default to 'system'
 if (browser) {
-    // Apply theme immediately on first load based on initial value
-    applyTheme(initialTheme); // Apply initial theme class correctly
-
-    theme.subscribe(value => {
-        if (['light', 'dark', 'system'].includes(value)) {
-            try {
-                 localStorage.setItem('theme', value); // Persist choice
-            } catch (e) {
-                 console.error("Error saving theme to localStorage:", e);
-            }
-            applyTheme(value); // Apply class to <html> tag
-        } else {
-            log_theme(`Invalid theme value received: ${value}. Resetting to system.`);
-            theme.set('system'); // Reset store to 'system' on invalid value
-        }
-    });
-
-    // Also listen for changes in OS preference *if* the current setting is 'system'
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    const systemThemeListener = (event) => {
-        let currentThemeValue;
-        const unsubscribe = theme.subscribe(value => { currentThemeValue = value; }); // Get current value
-        unsubscribe(); // Immediately unsubscribe after getting value
-        if (currentThemeValue === 'system') {
-            log_theme('System color scheme changed, reapplying theme based on system.');
-            applyTheme('system'); // Re-apply based on new system preference
-        }
-    };
-    mediaQuery.addEventListener('change', systemThemeListener);
-
-    // How to clean up this listener? Need to track it globally or use derived store approach.
-    // Let's simplify for now and rely on the derived store logic below which is cleaner.
-    // We might remove this specific listener if the derived store works well.
-    // For now, leave it but acknowledge potential cleanup need if not using derived store for class application.
+  try {
+    const storedTheme = localStorage.getItem('theme');
+    // Use stored theme only if it's one of the valid options
+    if (storedTheme && ['light', 'dark', 'system'].includes(storedTheme)) {
+      initialUserThemePreference = storedTheme;
+    } else {
+      // If no valid theme stored, set preference to 'system' and store it
+      localStorage.setItem('theme', 'system');
+    }
+  } catch (e) {
+    console.error("Error accessing localStorage for theme, defaulting to 'system'.", e);
+    initialUserThemePreference = 'system'; // Fallback safely
+  }
 }
 
-// Derived store to get the *actually* applied theme ('light' or 'dark')
-export const appliedTheme = derived(theme, ($theme, set) => {
-    if (!browser) { // Default for SSR if ever used
-        set('light');
-        return;
+// Writable store holding the user's *selected* preference ('light', 'dark', 'system')
+export const themePreference = writable(initialUserThemePreference);
+
+// Subscribe to changes in the user's preference store (runs only in browser)
+if (browser) {
+  // Apply the theme class immediately when the app loads based on initial preference
+  applyThemeClass(initialUserThemePreference);
+
+  // Whenever the themePreference store changes...
+  themePreference.subscribe(value => {
+    if (['light', 'dark', 'system'].includes(value)) {
+        try {
+            localStorage.setItem('theme', value); // ...save the new preference to localStorage...
+        } catch (e) {
+             console.error("Error saving theme preference to localStorage:", e);
+        }
+        applyThemeClass(value); // ...and apply the corresponding CSS class.
+    } else {
+      // Handle potential invalid value by resetting
+      log_theme(`Invalid theme preference value: ${value}. Resetting to 'system'.`);
+      themePreference.set('system');
     }
-    // Function to calculate and set the applied theme
+  });
+
+  // Listen for changes in the OS's color scheme preference
+  const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+  const systemThemeListener = (event) => {
+    let currentPreference;
+    const unsubscribe = themePreference.subscribe(v => { currentPreference = v; }); // Get current stored preference
+    unsubscribe();
+    // If the user preference is 'system', re-apply the theme class based on the new OS state
+    if (currentPreference === 'system') {
+        log_theme('System color scheme changed by OS, reapplying theme class.');
+        applyThemeClass('system');
+    }
+  };
+  mediaQuery.addEventListener('change', systemThemeListener);
+  // Note: Removing this listener on module unload isn't straightforward in plain JS modules.
+  // The derived store approach below is generally cleaner for reacting to OS changes.
+}
+
+// Derived store: automatically calculates the *actually applied* theme ('light' or 'dark')
+export const appliedTheme = derived(themePreference, ($preference, set) => {
+    if (!browser) { set('light'); return; } // SSR fallback
+
     const updateApplied = () => {
         const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        const actualTheme = $theme === 'system' ? (systemPrefersDark ? 'dark' : 'light') : $theme;
-        set(actualTheme);
-        // Apply class here instead? Could simplify the subscription logic above.
-        // document.documentElement.classList.remove('light', 'dark');
-        // document.documentElement.classList.add(actualTheme);
+        // If preference is 'system', use OS setting, otherwise use the explicit preference
+        set($preference === 'system' ? (systemPrefersDark ? 'dark' : 'light') : $preference);
     };
-    updateApplied(); // Set initial value
 
-    // Listen to changes in the OS preference to update derived store if theme is 'system'
+    updateApplied(); // Set the initial value
+
+    // Listen to OS changes and update the derived store's value
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
     mediaQuery.addEventListener('change', updateApplied);
 
-    // Return cleanup function for the listener
+    // Return cleanup function for the event listener
     return () => {
         mediaQuery.removeEventListener('change', updateApplied);
     };
-}, 'light'); // Initial default before hydration/calculation
+}, 'light'); // Initial value before browser check/calculation
 
-// Helper log specific to theme store
-function log_theme(...args) {
-    console.log('[ThemeStore]', ...args);
-}
-
-// --- END THEME STORE ---
+// --- !! NEW PRESET STORE !! ---
+// Store to hold the key of the currently selected preset ('warp', 'balanced', 'deepdive')
+export const selectedPreset = writable('balanced'); // Default to 'balanced' preset on load
+// --- END PRESET STORE ---

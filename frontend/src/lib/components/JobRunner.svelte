@@ -1,5 +1,4 @@
 <script>
-    // Script part remains the same
     import { onDestroy, onMount } from 'svelte';
     import { currentJob, jobConfigOverrides, apiBaseUrl, resetCurrentJob } from '../stores.js';
     import ReviewDialog from './ReviewDialog.svelte';

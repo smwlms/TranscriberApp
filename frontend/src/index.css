@@ -5,5 +5,5 @@
 
 /* Add global base styles with dark mode variants */
 body {
-  @apply bg-gray-50 text-gray-900 dark:bg-slate-900 dark:text-slate-100 transition-colors duration-150;
+  @apply bg-gray-50 text-gray-900 dark:bg-slate-900 dark:text-slate-100 transition-colors duration-150 font-sans antialiased;
 }
