@@ -1,30 +1,31 @@
-<!-- frontend/src/lib/components/ThemeToggle.svelte -->
 <script>
-    // Use the CORRECT store name 'themePreference'
-    import { themePreference } from '../stores.js';
+    // Import the writable store that holds the user's theme preference ('light', 'dark', or 'system')
+    import { themePreference } from '../stores.js'; // Use the correct store name
   
-    // Function to update the theme store
+    // Function to update the theme store when a button is clicked
     function setTheme(newTheme) {
-      $themePreference = newTheme; // Use correct store variable ($themePreference)
+      $themePreference = newTheme; // Update the store ($ notation triggers reactivity)
     }
   
-    // --- Tailwind Classes ---
+    // --- Tailwind Classes for Button States ---
+    // Base classes for consistent size, padding, focus, transitions
     const baseButtonClasses = "p-1.5 rounded-md transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-indigo-500 dark:focus:ring-offset-gray-800 inline-flex items-center gap-1";
+    // Classes applied when a button is *not* the active theme
     const inactiveButtonClasses = "text-gray-500 hover:bg-gray-200 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200";
-    const activeButtonClasses = "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-400";
+    // Classes applied when a button *is* the active theme
+    const activeButtonClasses = "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-400"; // Subtle active state
   
   </script>
   
   <div class="flex items-center space-x-1 border border-gray-300 dark:border-gray-600 p-0.5 rounded-lg bg-white dark:bg-gray-700/50 shadow-sm">
   
-    <!-- Light Theme Button -->
     <button
       type="button"
       title="Set Light Theme"
       aria-label="Set Light Theme"
-      aria-pressed={$themePreference === 'light'}    
+      aria-pressed={$themePreference === 'light'}   
       class="{baseButtonClasses}"
-      class:activeButtonClass={$themePreference === 'light'} 
+      class:activeButtonClass={$themePreference === 'light'}  
       class:inactiveButtonClass={$themePreference !== 'light'} 
       on:click={() => setTheme('light')}
     >
@@ -32,14 +33,13 @@
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z" /></svg>
     </button>
   
-    <!-- Dark Theme Button -->
     <button
       type="button"
       title="Set Dark Theme"
       aria-label="Set Dark Theme"
-      aria-pressed={$themePreference === 'dark'}     
+      aria-pressed={$themePreference === 'dark'}      
       class="{baseButtonClasses}"
-      class:activeButtonClass={$themePreference === 'dark'}  
+      class:activeButtonClass={$themePreference === 'dark'}   
       class:inactiveButtonClass={$themePreference !== 'dark'}  
       on:click={() => setTheme('dark')}
     >
@@ -47,15 +47,14 @@
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M21.752 15.002A9.72 9.72 0 0 1 18 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 0 0 3 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 0 0 9.002-5.998Z" /></svg>
     </button>
   
-    <!-- System Theme Button -->
     <button
       type="button"
       title="Use System Theme Preference"
       aria-label="Use System Theme Preference"
-      aria-pressed={$themePreference === 'system'}   
+      aria-pressed={$themePreference === 'system'}  
       class="{baseButtonClasses}"
       class:activeButtonClass={$themePreference === 'system'}
-      class:inactiveButtonClass={$themePreference !== 'system'}
+      class:inactiveButtonClass={$themePreference !== 'system'} 
       on:click={() => setTheme('system')}
     >
       <span class="sr-only">System Theme</span>
@@ -63,4 +62,4 @@
     </button>
   </div>
   
-  <style> /* No styles needed */ </style>
+  <style> /* No component-specific styles needed */ </style>

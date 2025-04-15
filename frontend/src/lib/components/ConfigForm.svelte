@@ -18,16 +18,34 @@
   
     // --- Preset Definitions (using user chosen names) ---
     const presetsConfig = {
-      quick: { mode: 'fast', whisper_model: 'tiny', compute_type: 'int8', speaker_name_detection_enabled: false, language: null, },
-      standard: { mode: 'fast', whisper_model: 'small', compute_type: 'int8', speaker_name_detection_enabled: true, language: null, },
-      multi: { mode: 'advanced', whisper_model: 'medium', compute_type: 'int8', speaker_name_detection_enabled: true, language: null, }
+      quick: {
+        mode: 'fast',
+        whisper_model: 'tiny',
+        compute_type: 'int8', // Will be adjusted by compatibility check if needed
+        speaker_name_detection_enabled: false,
+        language: null,
+      },
+      standard: { // Should align with most schema defaults
+        mode: 'fast',
+        whisper_model: 'small',
+        compute_type: 'int8',
+        speaker_name_detection_enabled: true, // Diarization itself always runs
+        language: null,
+      },
+      multi: {
+        mode: 'advanced',
+        whisper_model: 'medium', // User might want large-v3 depending on hardware
+        compute_type: 'int8',
+        speaker_name_detection_enabled: true,
+        language: null,
+      }
     };
   
     // --- Compatibility Rules & Available Types Calculation ---
     const COMPATIBILITY_RULES = {
-        mps: ['int8', 'float32', 'int16'], // Define compatible types for MPS
-        cuda: ['float16', 'bfloat16', 'int8', 'float32', 'int16'], // Common CUDA types
-        cpu: ['int8', 'float32', 'int16'], // Common CPU types
+        mps: ['int8', 'float32', 'int16'],
+        cuda: ['float16', 'bfloat16', 'int8', 'float32', 'int16'],
+        cpu: ['int8', 'float32', 'int16'],
         unknown: ['int8', 'float16', 'int16', 'bfloat16', 'float32'], // Fallback: show all
         error: ['int8', 'float16', 'int16', 'bfloat16', 'float32'], // Fallback: show all
     };
@@ -44,10 +62,12 @@
     let schemaDefaults = {};
     let defaultsInitialized = false;
     $: {
+      // Initialize schemaDefaults once schema is loaded
       if (!defaultsInitialized && schema && Object.keys(schema).length > 0) {
           const simpleTypes = ["string", "integer", "float", "bool", "enum"];
           schemaDefaults = {}; // Reset just in case
           for (const key in schema) {
+              // Ensure default is not undefined before adding
               if (schema[key]?.default !== undefined && simpleTypes.includes(schema[key].type)) {
                    schemaDefaults[key] = schema[key].default;
               }
@@ -55,6 +75,7 @@
           log('Schema defaults captured:', schemaDefaults);
           defaultsInitialized = true;
           // Trigger initial preset application now that defaults are ready
+          // Use the initial value from the selectedPreset store (likely 'standard')
           applyPreset($selectedPreset);
       }
     }
@@ -84,12 +105,21 @@
              log(`Preset compute_type '${targetComputeType}' invalid. Using schema default '${schema.compute_type.default}'.`, "WARN");
              mergedOverrides['compute_type'] = schema.compute_type.default;
         }
+  
         // Update the central store -> this updates the bound form elements
-        jobConfigOverrides.set(mergedOverrides);
-        log('Applied preset overrides:', mergedOverrides);
+        let currentOverridesValue;
+        const unsubscribe = jobConfigOverrides.subscribe(v => currentOverridesValue = v);
+        unsubscribe(); // Get current value then unsubscribe immediately
+        if(JSON.stringify(currentOverridesValue) !== JSON.stringify(mergedOverrides)){
+            jobConfigOverrides.set(mergedOverrides);
+            log('Applied preset overrides:', mergedOverrides);
+        } else {
+            log('Preset selection resulted in no changes to current overrides.');
+        }
     }
   
     // --- Reactive statement to apply presets when selection changes ---
+    // This ensures that clicking a preset button updates the form
     $: if(defaultsInitialized) applyPreset($selectedPreset);
   
   
@@ -100,7 +130,12 @@
   
     // --- Component Configuration ---
     const editableTypes = ["string", "integer", "float", "bool", "enum"];
-    const excludedKeys = ["input_audio", "intermediate_transcript_path", "llm_models", "hf_token", "llm_default_timeout", "llm_final_analysis_timeout"];
+    // Exclude keys handled elsewhere or too complex/read-only for this form
+    const excludedKeys = [
+        "input_audio", "intermediate_transcript_path", "llm_models", "hf_token",
+        "llm_default_timeout", "llm_final_analysis_timeout", "logging_enabled",
+        "log_level", "log_backup_count", "database_filename" // Also exclude logging/DB settings
+    ];
   
     // Helper function to toggle accordion sections
     function toggleSection(section) {
@@ -161,7 +196,7 @@
                    <div class="flex flex-col">
                      <label for={key} class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{formatLabel(key)}</label>
                      {#if spec.type === 'bool'}
-                       <input id={key} type="checkbox" bind:checked={$jobConfigOverrides[key]} class="mt-1 h-4 w-4 text-indigo-600 border-gray-300 dark:border-gray-500 rounded focus:ring-indigo-500 bg-white dark:bg-gray-700">
+                       <div class="flex items-center"> <input id={key} type="checkbox" bind:checked={$jobConfigOverrides[key]} class="mt-1 h-4 w-4 text-indigo-600 border-gray-300 dark:border-gray-500 rounded focus:ring-indigo-500 bg-white dark:bg-gray-700"></div>
                      {:else if spec.type === 'string'}
                         <input id={key} type="text" bind:value={$jobConfigOverrides[key]} placeholder="Default: {spec.default}" class="mt-1 block w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm placeholder-gray-400 dark:placeholder-gray-500">
                      {/if}
@@ -208,5 +243,5 @@
           background-position: right 0.5rem center; background-repeat: no-repeat; background-size: 1.5em 1.5em; padding-right: 2.5rem;
           -webkit-print-color-adjust: exact; print-color-adjust: exact; appearance: none; -webkit-appearance: none; -moz-appearance: none;
       }
-      /* Dark mode arrow styling removed (handled by Tailwind utilities on element) */
+      /* The .dark select rule was removed as it's unused */
   </style>

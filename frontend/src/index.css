@@ -1,9 +1,27 @@
 /* src/index.css */
+
+/* Import Tailwind's base styles, component classes, and utility classes */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Add global base styles with dark mode variants */
+/* Define global base styles, including dark mode variants */
 body {
-  @apply bg-gray-50 text-gray-900 dark:bg-slate-900 dark:text-slate-100 transition-colors duration-150 font-sans antialiased;
+  @apply bg-gray-50 text-gray-900           /* Default light mode styles */
+         dark:bg-slate-900 dark:text-slate-100  /* Dark mode overrides */
+         transition-colors duration-150        /* Smooth transition between modes */
+         font-sans                             /* Apply default sans-serif font */
+         antialiased;                          /* Improve font rendering */
 }
+
+/* Optional: Add other global styles or overrides below */
+/* Example: Consistent link styling
+a {
+  @apply text-indigo-600 dark:text-indigo-400 hover:underline;
+}
+*/
+
+/* Example: Ensure buttons have a consistent default focus ring
+button:focus-visible {
+  @apply ring-2 ring-offset-2 ring-indigo-500 dark:ring-offset-gray-900;
+} */

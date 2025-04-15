@@ -7,9 +7,7 @@
       { key: 'standard', label: 'Standard Brew' },
       { key: 'multi', label: 'Multi-Task Analysis' }
     ];
-    // --- Default preset key ---
-    // Ensure the store's default value matches one of these keys ('standard' is good)
-    // We assume stores.js initializes selectedPreset to 'standard'
+    // --- Default preset key ('standard' is assumed default in stores.js) ---
   
     function selectPreset(key) {
       $selectedPreset = key; // Update the store
@@ -18,7 +16,7 @@
     // --- Button styling ---
     const baseButtonClasses = "px-4 py-1.5 rounded-md text-sm font-medium transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-indigo-500 dark:focus:ring-offset-gray-900";
     const inactiveButtonClasses = "bg-gray-200 text-gray-600 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600";
-    const activeButtonClasses = "bg-indigo-600 text-white shadow-sm";
+    const activeButtonClasses = "bg-indigo-600 text-white shadow-sm dark:bg-indigo-500";
   
   </script>
   
@@ -41,7 +39,7 @@
     {#if $selectedPreset === 'quick'}
         <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Fastest processing, minimal analysis (summary only), name detection off.</p>
     {:else if $selectedPreset === 'standard'}
-        <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Good balance of speed and quality, includes summary and tries name detection.</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Good balance of speed and quality, includes summary and tries name detection (default).</p>
     {:else if $selectedPreset === 'multi'}
         <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">More accurate transcription, full advanced analysis (slower).</p>
     {/if}

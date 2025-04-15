@@ -2,9 +2,11 @@
 import { writable, readable, derived } from 'svelte/store';
 
 // --- Check if running in a browser environment ---
+// This works in plain Vite+Svelte without needing SvelteKit
 const browser = typeof window !== 'undefined';
 
 // --- Logging Helpers (Browser Only) ---
+// Define log functions that only output in the browser console
 function log_store(...args) { if (browser) { console.log('[Store]', ...args); } }
 function log_theme(...args) { if (browser) { console.log('[ThemeStore]', ...args); } }
 
@@ -26,10 +28,10 @@ export const currentJob = writable({
     result: null,       // Object containing results on completion
     error_message: null,
     stop_requested: false,
-    relative_audio_path: null // Filename after successful upload
+    relative_audio_path: null // Filename only after successful upload
 });
 
-// Holds the user's current selections from the ConfigForm
+// Holds the user's current selections from the ConfigForm (used as overrides)
 export const jobConfigOverrides = writable({});
 
 // Boolean flag indicating if the initial config has been fetched from the backend
@@ -38,7 +40,7 @@ export const configLoaded = writable(false);
 // Base URL for backend API calls (proxied by Vite during development)
 export const apiBaseUrl = readable('/api/v1');
 
-// Function to reset the job state, e.g., before starting a new job
+// Function to reset job state, e.g., before starting a new job
 export function resetCurrentJob() {
     currentJob.set({
         job_id: null, status: null, progress: 0, logs: [], result: null,
@@ -64,9 +66,14 @@ function applyThemeClass(themePreferenceValue) {
   }
   // Else: themePreferenceValue is 'light' or invalid, applies 'light'
 
-  root.classList.remove('light', 'dark'); // Remove any existing theme class
-  root.classList.add(themeToApply);      // Add the determined theme class
-  log_theme('Applied theme class to <html>:', themeToApply);
+  // Avoid unnecessary DOM manipulation if class is already correct
+  if (!root.classList.contains(themeToApply)) {
+      root.classList.remove('light', 'dark'); // Remove any existing theme class
+      root.classList.add(themeToApply);      // Add the determined theme class
+      log_theme('Applied theme class to <html>:', themeToApply);
+  } else {
+       log_theme('Theme class already set to:', themeToApply);
+  }
 }
 
 // Determine the initial theme preference on load
@@ -105,7 +112,7 @@ if (browser) {
         }
         applyThemeClass(value); // ...and apply the corresponding CSS class.
     } else {
-      // Handle potential invalid value by resetting
+      // Fallback for invalid values
       log_theme(`Invalid theme preference value: ${value}. Resetting to 'system'.`);
       themePreference.set('system');
     }
@@ -124,18 +131,21 @@ if (browser) {
     }
   };
   mediaQuery.addEventListener('change', systemThemeListener);
-  // Note: Removing this listener on module unload isn't straightforward in plain JS modules.
-  // The derived store approach below is generally cleaner for reacting to OS changes.
+  // Note: Cleanup for this module-level listener isn't handled automatically by Svelte.
+  // In a larger app, manage this listener lifecycle more carefully if needed.
 }
 
 // Derived store: automatically calculates the *actually applied* theme ('light' or 'dark')
+// Useful for components that need to know the current effective mode, not just the preference.
 export const appliedTheme = derived(themePreference, ($preference, set) => {
     if (!browser) { set('light'); return; } // SSR fallback
 
     const updateApplied = () => {
         const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        // If preference is 'system', use OS setting, otherwise use the explicit preference
-        set($preference === 'system' ? (systemPrefersDark ? 'dark' : 'light') : $preference);
+        // If preference is 'system', use OS setting, otherwise use the explicit preference ('light' or 'dark')
+        const actualTheme = $preference === 'system' ? (systemPrefersDark ? 'dark' : 'light') : $preference;
+        set(actualTheme);
+        log_theme('Applied theme derived store updated:', actualTheme);
     };
 
     updateApplied(); // Set the initial value
@@ -144,13 +154,17 @@ export const appliedTheme = derived(themePreference, ($preference, set) => {
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
     mediaQuery.addEventListener('change', updateApplied);
 
-    // Return cleanup function for the event listener
+    // Return cleanup function for the event listener (Svelte handles this for derived stores)
     return () => {
         mediaQuery.removeEventListener('change', updateApplied);
+        log_theme('Cleaned up appliedTheme media query listener.');
     };
 }, 'light'); // Initial value before browser check/calculation
 
-// --- !! NEW PRESET STORE !! ---
-// Store to hold the key of the currently selected preset ('warp', 'balanced', 'deepdive')
-export const selectedPreset = writable('balanced'); // Default to 'balanced' preset on load
+
+// --- PRESET STORE ---
+// Store to hold the key of the currently selected preset ('quick', 'standard', 'multi')
+export const selectedPreset = writable('standard'); // Default to 'standard' preset on load
 // --- END PRESET STORE ---
+
+// --- End of stores.js ---
