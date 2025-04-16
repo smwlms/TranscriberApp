@@ -1,4 +1,4 @@
-# src/routes/review_routes.py
+# File: src/routes/review_routes.py
 import threading
 import json
 import traceback
@@ -84,6 +84,7 @@ def get_review_data(job_id):
         log(msg, "ERROR"); load_errors.append(msg)
 
     # Load Proposed Speaker Map (Optional - may not exist)
+    # This will load the file containing the new structure if saved correctly by Part 1
     if proposed_map_rel_path:
         try:
             full_path = (PROJECT_ROOT / proposed_map_rel_path).resolve()
@@ -91,6 +92,7 @@ def get_review_data(job_id):
             # Only try loading if the file exists
             if full_path.is_file():
                  with open(full_path, "r", encoding='utf-8') as f:
+                     # json.load will parse the nested structure correctly
                      review_payload["proposed_map"] = json.load(f)
                  log(f"API: Successfully loaded proposed map for review: {proposed_map_rel_path}", "DEBUG")
             else:
@@ -107,6 +109,7 @@ def get_review_data(job_id):
 
 
     # Load Context Snippets (Optional - may not exist)
+    # This remains unchanged and loads the context snippets needed for explanation
     if context_snippets_rel_path:
         try:
             full_path = (PROJECT_ROOT / context_snippets_rel_path).resolve()
@@ -133,6 +136,7 @@ def get_review_data(job_id):
          return jsonify({"error": "Failed to load essential review data (transcript).", "details": load_errors}), 500
 
     # If loading succeeded (at least for the transcript), return the payload
+    # This payload now contains the structured proposed_map and context_snippets
     log(f"API: Successfully prepared review data payload for job {job_id}.", "INFO")
     return jsonify(review_payload)
 
@@ -142,6 +146,7 @@ def update_review_data(job_id):
     """
     API endpoint to receive the final speaker map (as JSON) from the user
     and trigger Part 2 of the pipeline in a background thread.
+    (This function remains unchanged as it only receives the final map edited by the user)
     """
     log(f"API: Received review update (final map) for job {job_id}", "INFO")
 

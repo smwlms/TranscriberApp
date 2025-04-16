@@ -1,4 +1,4 @@
-# src/transcriber.py
+# File: src/transcriber.py
 
 import os
 import time
@@ -12,6 +12,8 @@ from typing import List, Dict, Optional, Any, Tuple # Added Tuple hint
 # --- Third-party library imports ---
 try:
     from faster_whisper import WhisperModel
+    # Import Segment for type hinting whisper results more accurately
+    from faster_whisper.transcribe import Segment as WhisperSegmentObject
 except ImportError as e:
     raise ImportError("Error: faster-whisper is not installed. Please run 'pip install faster-whisper'.") from e
 
@@ -110,13 +112,16 @@ def _load_models(
         return None, None # Return None tuple on failure
 
 
+# *** MODIFICATION 1: Add 'word_timestamps_enabled' argument to signature ***
 def _run_transcription(
     whisper_model: WhisperModel,
     wav_path: Path,
-    language: Optional[str]
-    ) -> Optional[List[Any]]:
+    language: Optional[str],
+    word_timestamps_enabled: bool # <-- ADDED ARGUMENT
+    ) -> Optional[List[WhisperSegmentObject]]: # <-- Changed return type hint
     """Runs Whisper transcription on the provided WAV audio file."""
-    log(f"Starting transcription on '{wav_path.name}'...", "INFO")
+    # Log the setting being used
+    log(f"Starting transcription on '{wav_path.name}' (Word Timestamps: {word_timestamps_enabled})...", "INFO")
     try:
         start_time = time.time()
         # Transcribe the audio file
@@ -124,10 +129,12 @@ def _run_transcription(
             str(wav_path),
             beam_size=5,            # Standard beam size for decoding
             language=language,      # None for auto-detect, or specify e.g., "en"
-            word_timestamps=False   # Set True for word-level detail (slower)
+            # *** MODIFICATION 2: Pass the argument to the transcribe call ***
+            word_timestamps=word_timestamps_enabled
         )
         # Collect all segments from the generator into a list
-        whisper_results = list(segments_generator)
+        # These are faster_whisper Segment objects
+        whisper_results: List[WhisperSegmentObject] = list(segments_generator) # Added type hint
         elapsed = round(time.time() - start_time, 2)
 
         # Log transcription results
@@ -170,13 +177,15 @@ def _run_diarization(
         return None # Return None on failure
 
 
+# *** MODIFICATION 3: Adapt _merge_results to handle word data ***
 def _merge_results(
-    whisper_segments: List[Any], # Type from faster_whisper segment objects
+    whisper_segments: List[WhisperSegmentObject], # Use specific type hint
     diarization_result: Optional[Annotation] # Result from Pyannote pipeline
     ) -> Optional[List[Dict[str, Any]]]:
     """
     Merges Whisper transcription segments with Pyannote diarization results
-    by assigning a speaker label to each text segment.
+    by assigning a speaker label to each text segment. Includes word-level
+    timestamp data if available in the Whisper segments.
     """
     final_merged_segments: List[Dict[str, Any]] = []
     log("Merging transcription and diarization results...", "INFO")
@@ -184,13 +193,23 @@ def _merge_results(
     if not diarization_result:
         log("Diarization result is missing. Assigning 'SPEAKER_UNKNOWN' to all segments.", "WARNING")
         # Fallback: If diarization failed or returned None, create segments with UNKNOWN speaker
-        for segment_info in whisper_segments:
-            final_merged_segments.append({
+        for i, segment_info in enumerate(whisper_segments):
+            segment_data = {
                 "text": getattr(segment_info, 'text', '').strip(),
                 "start": getattr(segment_info, 'start', 0.0),
                 "end": getattr(segment_info, 'end', 0.0),
                 "speaker": "SPEAKER_UNKNOWN" # Assign fallback speaker ID
-            })
+            }
+            # --- Add word data handling even in fallback ---
+            if hasattr(segment_info, 'words') and segment_info.words:
+                segment_data["words"] = [
+                    {"word": word.word.strip(), "start": word.start, "end": word.end}
+                    for word in segment_info.words
+                ]
+            else:
+                 segment_data["words"] = []
+            # ---------------------------------------------
+            final_merged_segments.append(segment_data)
         return final_merged_segments
 
     try:
@@ -223,13 +242,29 @@ def _merge_results(
                 log(f"Error merging speaker for segment {i+1} [{segment_start:.2f}-{segment_end:.2f}]: {merge_err}", "WARNING")
                 # Keep the 'SPEAKER_ERROR' label assigned above
 
-            # Append the merged segment information (text, times, speaker) to the final list
-            final_merged_segments.append({
+            # --- Create base segment data dictionary ---
+            segment_data = {
                 "text": segment_text,
                 "start": segment_start,
                 "end": segment_end,
-                "speaker": speaker_label # Assigned speaker ID (e.g., "SPEAKER_00", "SPEAKER_UNKNOWN", "SPEAKER_ERROR")
-            })
+                "speaker": speaker_label
+            }
+
+            # --- Add word data if available ---
+            # Check if the segment object has a 'words' attribute and if it's not empty
+            if hasattr(segment_info, 'words') and segment_info.words:
+                # Format the word data into the structure expected by the frontend
+                segment_data["words"] = [
+                    {"word": word.word.strip(), "start": word.start, "end": word.end}
+                    for word in segment_info.words
+                ]
+            else:
+                # If no words attribute or it's empty, add an empty list for consistency
+                segment_data["words"] = []
+            # ------------------------------------
+
+            # Append the merged segment information (text, times, speaker, words) to the final list
+            final_merged_segments.append(segment_data)
 
         log("Merge of transcription and diarization results completed successfully.", "SUCCESS")
         return final_merged_segments
@@ -255,6 +290,7 @@ def _cleanup_temp_file(temp_file_path: Optional[Path], original_input_path: Path
 
 # --- Main Public Function ---
 
+# *** MODIFICATION 4: Ensure 'word_timestamps_enabled' is in the signature (already present in user's code) ***
 def transcribe_and_diarize(
     input_audio_path: Path,
     whisper_model_size: str = DEFAULT_WHISPER_MODEL,
@@ -262,6 +298,7 @@ def transcribe_and_diarize(
     language: Optional[str] = None,
     hf_token: Optional[str] = os.environ.get("HUGGING_FACE_TOKEN"), # Default to env var
     pyannote_pipeline_name: str = DEFAULT_PYANNOTE_PIPELINE,
+    word_timestamps_enabled: bool = False, # Default is False
 ) -> Optional[List[Dict[str, Any]]]:
     """
     Performs transcription and diarization using a structured workflow with helper functions.
@@ -273,9 +310,10 @@ def transcribe_and_diarize(
         language: Optional language code for transcription (None for auto-detect).
         hf_token: Hugging Face API token for Pyannote model access.
         pyannote_pipeline_name: Name of the Pyannote pipeline model.
+        word_timestamps_enabled: Set to True to generate word-level timestamps (slower).
 
     Returns:
-        A list of merged segment dictionaries (with 'text', 'start', 'end', 'speaker'),
+        A list of merged segment dictionaries (with 'text', 'start', 'end', 'speaker', 'words'),
         or None if a critical error occurs.
     """
     log(f"Starting transcription & diarization process for: {input_audio_path.name}", "INFO")
@@ -311,7 +349,13 @@ def transcribe_and_diarize(
             raise RuntimeError("Failed to load necessary AI models.")
 
         # Step 4: Run Transcription
-        transcript_segments = _run_transcription(whisper_model, wav_path_to_process, language)
+        # *** MODIFICATION 5: Pass 'word_timestamps_enabled' to the internal helper ***
+        transcript_segments = _run_transcription(
+            whisper_model,
+            wav_path_to_process,
+            language,
+            word_timestamps_enabled # <-- Pass the argument here
+        )
         if transcript_segments is None:
             raise RuntimeError("Transcription step failed.")
 
@@ -344,7 +388,7 @@ if __name__ == "__main__":
     from src.utils.log import setup_logging # Need setup for the test
     import logging
     print("-" * 40)
-    print("--- Testing Transcriber with Diarization (Refactored) ---")
+    print("--- Testing Transcriber with Diarization (Refactored & Modified) ---") # Updated print
     print("-" * 40)
     try:
         from src.utils.config_schema import PROJECT_ROOT
@@ -352,33 +396,48 @@ if __name__ == "__main__":
         PROJECT_ROOT = Path(__file__).resolve().parent.parent
     # --- Test Configuration ---
     test_audio = PROJECT_ROOT / "audio" / "sample.mp3" # !! ADJUST IF YOUR SAMPLE IS ELSEWHERE !!
-    test_model = "small" # Use a smaller model for faster testing if needed
+    test_model = "tiny" # Use a smaller model for faster testing if needed
     test_compute = "int8"
     test_lang = None # Auto-detect language
     test_hf_token = os.environ.get("HUGGING_FACE_TOKEN")
+    test_word_timestamps = True # <-- Set to True for testing the modified code
     # --- Pre-Checks ---
     if not test_audio.is_file(): print(f"❌ Test audio file not found at '{test_audio}'. Adjust path in script.")
     else:
         if not test_hf_token: print("⚠️ WARNING: HUGGING_FACE_TOKEN env var not set. Diarization might fail.")
         # --- Setup & Run ---
         setup_logging(level=logging.DEBUG) # Show detailed logs for testing
-        print("\n--- Running Test ---"); print(f"Input: {test_audio.name}"); print(f"Model: {test_model}/{test_compute}"); print(f"Lang: {test_lang or 'Auto'}"); print(f"Pipeline: {DEFAULT_PYANNOTE_PIPELINE}"); print(f"HF Token: {'Yes' if test_hf_token else 'No'}"); print("-" * 20)
+        print("\n--- Running Test ---"); print(f"Input: {test_audio.name}"); print(f"Model: {test_model}/{test_compute}"); print(f"Lang: {test_lang or 'Auto'}"); print(f"Pipeline: {DEFAULT_PYANNOTE_PIPELINE}"); print(f"HF Token: {'Yes' if test_hf_token else 'No'}"); print(f"Word Timestamps: {test_word_timestamps}"); print("-" * 20) # Added Word Timestamps to output
         start_run_time = time.time()
-        results = transcribe_and_diarize(input_audio_path=test_audio, whisper_model_size=test_model, compute_type=test_compute, language=test_lang, hf_token=test_hf_token)
+        # Pass the test_word_timestamps variable
+        results = transcribe_and_diarize(
+            input_audio_path=test_audio,
+            whisper_model_size=test_model,
+            compute_type=test_compute,
+            language=test_lang,
+            hf_token=test_hf_token,
+            word_timestamps_enabled=test_word_timestamps # <-- Pass the test setting
+        )
         end_run_time = time.time(); print("-" * 20); print(f"Processing finished in {end_run_time - start_run_time:.2f} seconds.")
         # --- Display & Save Results ---
         if results:
-            print("\n--- Results (First 10 Segments) ---")
-            for i, seg in enumerate(results[:10]): start_ts = f"[{int(seg['start'] // 60):02d}:{int(seg['start'] % 60):02d}]"; end_ts = f"[{int(seg['end'] // 60):02d}:{int(seg['end'] % 60):02d}]"; print(f"{start_ts}-{end_ts} {seg['speaker']}: {seg['text']}")
-            if len(results) > 10: print("...")
+            print("\n--- Results (First 5 Segments with Word Data if generated) ---") # Updated print
+            for i, seg in enumerate(results[:5]):
+                start_ts = f"[{int(seg['start'] // 60):02d}:{int(seg['start'] % 60):02d}]"
+                end_ts = f"[{int(seg['end'] // 60):02d}:{int(seg['end'] % 60):02d}]"
+                print(f"{start_ts}-{end_ts} {seg['speaker']}: {seg['text']}")
+                # Print word data if available
+                if seg.get('words'):
+                     word_preview = " ".join([f"{w['word']}({w['start']:.1f}-{w['end']:.1f})" for w in seg['words'][:10]]) # Show first 10 words with times
+                     print(f"    Words: {word_preview}{'...' if len(seg['words']) > 10 else ''}")
+            if len(results) > 5: print("...")
             print(f"\nTotal segments generated: {len(results)}")
             try:
-                output_json_path = PROJECT_ROOT / "transcriber_test_output_refactored.json"
+                output_json_path = PROJECT_ROOT / "transcriber_test_output_modified.json" # Updated filename
                 with open(output_json_path, "w", encoding='utf-8') as f:
                     json.dump(results, f, indent=2, ensure_ascii=False)
                 print(f"\n✅ Results successfully saved to: {output_json_path}")
             except Exception as e:
                 print(f"\n❌ Error saving results to JSON: {e}")
-            except Exception as e: print(f"\n❌ Error saving results to JSON: {e}")
         else: print("\n--- Processing failed. Check logs above for errors. ---")
     print("-" * 40); print("--- Testing Complete ---"); print("-" * 40)

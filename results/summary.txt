@@ -1,0 +1,8 @@
+Here is a concise bullet-point summary of the conversation:
+
+• The speaker (SPEAKER_00) forgot to check for duplicates in the postcode data.
+• It's possible that multiple entries were submitted with the same postcode.
+• SPEAKER_01 emphasizes that this doesn't affect A2M1 and notes that duplicates should be deduplicated.
+• SPEAKER_01 explains that even if all fields are filled, some postcodes may appear twice (e.g., 9000).
+• SPEAKER_00 agrees to take care of the deduplication task.
+• The conversation ends with a confirmation that everything is good.

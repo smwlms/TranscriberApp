@@ -4,6 +4,7 @@
 # Virtual environment
 venv/
 .venv/
+/frontend/node_modules/  
 
 # Python cache and byte code
 __pycache__/
@@ -19,13 +20,14 @@ dist/
 # Log files
 logs/
 
-# Data directories (
-audio/
-transcripts/
-results/
+# Data directories (Optional: uncomment if you DON'T want to track samples/results)
+# audio/
+# transcripts/
+# results/
 
 # Configuration file (user-specific, generate from schema)
-config.yaml
+# Comment out if you want to track a base config, but not user changes
+# config.yaml
 
 # Database files
 *.db
@@ -41,4 +43,4 @@ Thumbs.db # Windows
 # IDE / Editor specific files
 .vscode/
 .idea/
-*.swp.DS_Store
+*.swp

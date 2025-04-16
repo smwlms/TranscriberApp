@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Conversation Transcript</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+            line-height: 1.6;
+            margin: 1em;
+            background-color: #f8f9fa; /* Light grey background */
+            color: #212529; /* Dark text color */
+        }
+        .transcript-container {
+            max-width: 800px; /* Limit content width */
+            margin: 1em auto; /* Center container */
+            background-color: #ffffff; /* White background for content */
+            padding: 1.5em 2em; /* Padding inside container */
+            border-radius: 8px; /* Rounded corners */
+            box-shadow: 0 2px 5px rgba(0,0,0,0.08); /* Subtle shadow */
+        }
+        h2 {
+            text-align: center;
+            color: #343a40; /* Darker grey for heading */
+            margin-bottom: 1.5em;
+            border-bottom: 1px solid #dee2e6; /* Separator line */
+            padding-bottom: 0.5em;
+        }
+        .speaker-block {
+            margin-bottom: 1.5em; /* Space between different speakers */
+            padding-bottom: 1em;
+            border-bottom: 1px solid #f1f3f5; /* Lighter separator between blocks */
+        }
+        .speaker-block:last-child {
+            margin-bottom: 0; /* No bottom margin for the last block */
+            border-bottom: none; /* No separator line for the last block */
+        }
+        .speaker-name {
+            font-weight: bold;
+            color: #0056b3; /* Blue color for speaker name */
+            margin-bottom: 0.6em;
+            font-size: 1.05em; /* Slightly larger speaker name */
+        }
+        .segment {
+            margin-bottom: 0.6em; /* Space between segments of the same speaker */
+            display: flex; /* Use flexbox for alignment */
+            align-items: baseline; /* Align timestamp and text baseline */
+        }
+        .timestamp {
+            font-family: monospace;
+            font-size: 0.85em;
+            color: #6c757d; /* Medium grey for timestamp */
+            margin-right: 0.75em;
+            flex-shrink: 0; /* Prevent timestamp from shrinking */
+            width: 70px; /* Fixed width for alignment */
+            text-align: right;
+        }
+        .segment-text {
+            /* Text takes remaining space */
+        }
+        /* Basic responsive adjustment */
+        @media (max-width: 600px) {
+            body { margin: 0.5em; }
+            .transcript-container { padding: 1em; }
+            .timestamp { width: 60px; margin-right: 0.5em; }
+        }
+    </style>
+</head>
+<body>
+<div class="transcript-container">
+    <h2>Conversation Transcript</h2><div class="speaker-block"><div class="speaker-name">SPEAKER_01</div><div class="segment"><span class="timestamp">[00:06]</span><span class="segment-text">Ja, van wel.</span></div></div><div class="speaker-block"><div class="speaker-name">SPEAKER_00</div><div class="segment"><span class="timestamp">[00:07]</span><span class="segment-text">Ik was de heeding vergeten, voor die postcodeurs.</span></div><div class="segment"><span class="timestamp">[00:10]</span><span class="segment-text">In uw mail zegt hij iets over dat er duplicaten kunnen zijn.</span></div><div class="segment"><span class="timestamp">[00:14]</span><span class="segment-text">Dus het is mogelijk dat maakelaars dezelfde postcodeurs opgeven.</span></div></div><div class="speaker-block"><div class="speaker-name">SPEAKER_01</div><div class="segment"><span class="timestamp">[00:19]</span><span class="segment-text">Ja, maar dat moet jullie zeggen op zich niks van A2M1.</span></div></div><div class="speaker-block"><div class="speaker-name">SPEAKER_00</div><div class="segment"><span class="timestamp">[00:25]</span><span class="segment-text">Ja, dat postmaakt niet uit, dus wij moeten ze wel dedupliceren.</span></div></div><div class="speaker-block"><div class="speaker-name">SPEAKER_01</div><div class="segment"><span class="timestamp">[00:28]</span><span class="segment-text">Ja, jullie moeten gewoon weten dat, inderdaad, als je alle felden binnenhaalt,</span></div><div class="segment"><span class="timestamp">[00:33]</span><span class="segment-text">er alle postcodeurs uit, dat voorbeeld de postcode, ik zeg niet maar,</span></div><div class="segment"><span class="timestamp">[00:36]</span><span class="segment-text">iets klopt niet, maar 9000 ter 2 keer kan voorkomen.</span></div><div class="segment"><span class="timestamp">[00:39]</span><span class="segment-text">En dat jullie die 9000, dat dat systeem niet bokt, op het feit dat 9000 ter 2 keer in staat.</span></div></div><div class="speaker-block"><div class="speaker-name">SPEAKER_00</div><div class="segment"><span class="timestamp">[00:45]</span><span class="segment-text">Ja, maar ik kan dat precies niet meer antassen.</span></div></div><div class="speaker-block"><div class="speaker-name">SPEAKER_01</div><div class="segment"><span class="timestamp">[00:49]</span><span class="segment-text">Oké, cool.</span></div><div class="segment"><span class="timestamp">[00:50]</span><span class="segment-text">Dat moet jullie doen en wij zorgen dan in turn wel dat ze gepliceerd worden.</span></div><div class="segment"><span class="timestamp">[00:54]</span><span class="segment-text">Dat is onze dingen.</span></div></div><div class="speaker-block"><div class="speaker-name">SPEAKER_00</div><div class="segment"><span class="timestamp">[00:55]</span><span class="segment-text">Goed?</span></div><div class="segment"><span class="timestamp">[00:55]</span><span class="segment-text">Ja, dat is goed.</span></div></div><div class="speaker-block"><div class="speaker-name">SPEAKER_01</div><div class="segment"><span class="timestamp">[00:58]</span><span class="segment-text">Oké, inderdaad.</span></div></div></div></body></html>

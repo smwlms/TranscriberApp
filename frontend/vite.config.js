@@ -1,3 +1,4 @@
+// File: frontend/vite.config.js
 import { defineConfig } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 
@@ -10,19 +11,28 @@ export default defineConfig({
     port: 5173, // Port for the Vite dev server (default)
     strictPort: true, // Exit if port is already in use
     proxy: {
-      // Proxy requests starting with /api/v1 to the Flask backend
-      // This avoids CORS issues during development.
-      '/api/v1': { // Match the prefix set in app.py
+      // Proxy API requests starting with /api/v1
+      '/api/v1': {
         target: 'http://localhost:5001', // Your Flask backend address
         changeOrigin: true, // Needed for virtual hosted sites
         secure: false,      // Allow proxying to http target
-        // No path rewrite needed as Flask routes already start with /api/v1
+      },
+      // *** ADDED: Proxy static audio file requests ***
+      '/audio': {
+        target: 'http://localhost:5001', // Point to Flask backend
+        changeOrigin: true,
+        secure: false,
+      },
+      // *** ADDED: Proxy static result file requests ***
+      '/results': {
+        target: 'http://localhost:5001', // Point to Flask backend
+        changeOrigin: true,
+        secure: false,
       }
     }
   },
-  // Optional: Specify the build output directory
   build: {
-     outDir: 'dist', // Directory for the production build output
-     emptyOutDir: true, // Clear the directory before each build
+     outDir: 'dist',
+     emptyOutDir: true,
   }
 })

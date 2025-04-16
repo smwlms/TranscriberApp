@@ -1,0 +1,49 @@
+mode: fast
+whisper_model: small
+compute_type: int8
+language: null
+pyannote_pipeline: pyannote/speaker-diarization-3.1
+speaker_name_detection_enabled: true
+speaker_map_path: speaker_map.yaml
+input_audio: audio/sample.mp3
+intermediate_transcript_path: transcripts/intermediate_transcript.json
+llm_models:
+  summary:
+  - llama3:8b
+  - mistral:7b
+  - phi3:medium
+  intent:
+  - mistral:7b
+  - llama3:8b
+  - phi3:medium
+  actions:
+  - llama3:8b
+  - phi3:medium
+  - mistral:7b
+  emotion:
+  - phi3:medium
+  - llama3:8b
+  - mistral:7b
+  questions:
+  - llama3:8b
+  - qwen2:7b
+  - phi3:medium
+  legal:
+  - llama3:8b
+  - phi3:medium
+  - mistral:7b
+  name_detection:
+  - llama3:8b
+  - mistral:7b
+  final:
+  - llama3:8b
+  - phi3:medium
+extra_context_prompt: ''
+llm_default_timeout: null
+llm_final_analysis_timeout: null
+logging_enabled: true
+log_level: DEBUG
+log_backup_count: 7
+database_filename: llm_training_data.db
+hf_token: null
+word_timestamps_enabled: true

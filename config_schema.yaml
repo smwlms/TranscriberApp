@@ -1,4 +1,4 @@
-# Configuration Schema for Real Estate Transcriber (Update Project Name if needed)
+# Configuration Schema for TranscriberApp
 
 # --- Core Processing Modes & Models ---
 mode:
@@ -9,126 +9,84 @@ mode:
 
 whisper_model:
   type: enum
-  options: ["tiny", "base", "small", "medium", "large-v2", "large-v3"] # Added v3
+  options: ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
   default: "small"
-  description: "Select the FasterWhisper model size. Larger models are more accurate but slower and require more VRAM."
+  description: "Select the FasterWhisper model size. Larger models are more accurate but slower and require more VRAM/RAM."
 
 compute_type:
   type: enum
-  options: ["int8", "float16", "int16", "bfloat16", "float32"] # Added more types
+  options: ["int8", "float16", "int16", "bfloat16", "float32"]
   default: "int8"
-  description: "Compute type for Whisper. 'int8' is fast, especially on CPU/Apple Silicon. 'float16' or 'bfloat16' might be better on NVIDIA GPUs."
+  description: "Compute type for Whisper. UI filters based on detected device (e.g., 'int8', 'float32' for MPS/CPU; all for CUDA). 'int8' is often fastest on CPU/MPS."
 
 language:
-  type: string # Represents string but can be null/None
-  default: null # Use YAML null for auto-detect
+  type: string
+  default: null # YAML null for auto-detect
   description: "Language code for transcription (e.g., 'en', 'nl'). Leave null/empty for automatic detection."
+
+word_timestamps_enabled:
+  type: bool
+  default: false # Default is OFF as it increases processing time/memory
+  description: "Enable generation of word-level timestamps by Whisper (slower, uses more memory)."
 
 # --- Speaker Diarization & Mapping ---
 pyannote_pipeline:
   type: string
-  default: "pyannote/speaker-diarization-3.1" # Common choice, requires HF token and accepting terms
+  default: "pyannote/speaker-diarization-3.1" # Requires HF token and accepting terms
   description: "Name of the Pyannote pipeline model from Hugging Face for speaker diarization."
 
 speaker_name_detection_enabled:
   type: bool
-  default: true
-  description: "Enable automatic detection of speaker names from the transcript using an LLM."
+  default: false # Default is OFF due to potential LLM inconsistency
+  description: "Enable automatic detection of speaker names using an LLM (experimental)."
 
 speaker_map_path:
   type: string
-  default: "speaker_map.yaml" # Relative to project root
-  description: "Path to the YAML file used for initial/manual speaker name mapping (if detection is off or as fallback)."
+  default: "speaker_map.yaml" # Relative to project root (Mainly for CLI or fallback)
+  description: "Path to YAML file for manual speaker mapping."
 
 # --- File Paths ---
-# Note: input_audio is typically provided by API/CLI override, this is just a config default.
 input_audio:
   type: string
-  default: "audio/sample.mp3" # Default audio file if none specified via CLI/API
-  description: "Default input audio file path (relative to project root)."
+  default: "audio/sample.mp3" # Default if none specified via CLI/API
+  description: "Default input audio file path (relative to project root). Usually overridden."
 
 intermediate_transcript_path:
   type: string
   default: "transcripts/intermediate_transcript.json" # Relative to project root
-  description: "Path to store the intermediate raw, diarized transcript JSON before final processing."
+  description: "Path to store the raw, diarized transcript JSON before final processing."
 
 # --- LLM Configuration ---
 llm_models:
   type: object
-  description: "Preferred local Ollama models for each task (e.g., 'llama3:8b'). Tried in order listed."
+  description: "Preferred local Ollama models for each task. Models are tried in order listed until one succeeds."
   properties:
-    summary:
-      type: list
-      default: ["llama3:8b", "mistral:7b", "phi3:medium"]
-      description: "LLMs for generating summaries (used in 'fast' mode and 'advanced' summary task)."
-    intent:
-      type: list
-      default: ["mistral:7b", "llama3:8b", "phi3:medium"]
-      description: "LLMs for analyzing speaker intentions."
-    actions:
-      type: list
-      default: ["llama3:8b", "phi3:medium", "mistral:7b"]
-      description: "LLMs for detecting action items or decisions."
-    emotion:
-      type: list
-      default: ["phi3:medium", "llama3:8b", "mistral:7b"]
-      description: "LLMs for analyzing tone and emotion."
-    questions:
-      type: list
-      default: ["llama3:8b", "qwen2:7b", "phi3:medium"] # Example with qwen2
-      description: "LLMs for identifying questions or concerns."
-    legal:
-      type: list
-      default: ["llama3:8b", "phi3:medium", "mistral:7b"]
-      description: "LLMs for identifying legal terms or implications."
-    name_detection: # Task for automatic name detection
-      type: list
-      default: ["mistral:7b", "llama3:8b"] # Often good at extraction
-      description: "LLMs used specifically for detecting speaker names from the transcript."
-    final: # LLM for the final aggregating analysis in 'advanced' mode
-      type: list
-      default: ["llama3:8b", "phi3:medium"]
-      description: "LLM that synthesizes all previous analyses into a final report."
+    summary: { type: list, default: ["llama3:8b", "mistral:7b", "phi3:medium"], description: "LLMs for summaries ('fast' & 'advanced')." }
+    intent: { type: list, default: ["mistral:7b", "llama3:8b", "phi3:medium"], description: "LLMs for intentions ('advanced')." }
+    actions: { type: list, default: ["llama3:8b", "phi3:medium", "mistral:7b"], description: "LLMs for actions/decisions ('advanced')." }
+    emotion: { type: list, default: ["phi3:medium", "llama3:8b", "mistral:7b"], description: "LLMs for tone/emotion ('advanced')." }
+    questions: { type: list, default: ["llama3:8b", "qwen2:7b", "phi3:medium"], description: "LLMs for questions/concerns ('advanced')." }
+    legal: { type: list, default: ["llama3:8b", "phi3:medium", "mistral:7b"], description: "LLMs for legal terms/implications ('advanced')." }
+    name_detection: { type: list, default: ["llama3:8b", "mistral:7b"], description: "LLMs for speaker name detection (if enabled)." }
+    final: { type: list, default: ["llama3:8b", "phi3:medium"], description: "LLM for final report synthesis ('advanced')." }
 
 extra_context_prompt:
   type: string
-  default: "" # Default to empty string
-  description: "Additional text prompt provided as context to ALL LLM analysis tasks."
+  default: ""
+  description: "Additional context prompt provided to ALL LLM analysis tasks."
 
 llm_default_timeout:
-  type: integer # Represents integer but can be null/None
-  default: null # Default to no specific timeout (can be long for Ollama)
-  description: "Default timeout in seconds for individual Ollama LLM calls (null or 0 means wait indefinitely)."
+  type: integer
+  default: null # Wait indefinitely for Ollama by default
+  description: "Default timeout in seconds for individual Ollama LLM calls (null/0 means wait indefinitely)."
 
 llm_final_analysis_timeout:
-  type: integer # Represents integer but can be null/None
-  default: null # Default to no specific timeout for the final task
+  type: integer
+  default: null
   description: "Specific timeout in seconds for the 'final' aggregating LLM call (overrides default if set)."
 
 # --- Logging & Database ---
-logging_enabled:
-  type: bool
-  default: true
-  description: "Enable or disable logging to console and file."
-
-log_level:
-  type: enum
-  options: ["DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"] # Added SUCCESS
-  default: "INFO"
-  description: "Minimum level for messages to be logged."
-
-log_backup_count:
-  type: integer
-  default: 7
-  description: "Number of old daily log files to keep (e.g., app.log.YYYY-MM-DD)."
-
-database_filename:
-  type: string
-  default: "llm_training_data.db" # Relative to project root
-  description: "Filename for the SQLite database storing job results."
-
-# --- Secrets (Use .env file preferably!) ---
-hf_token:
-  type: string # Represents string but can be null/None
-  default: null
-  description: "Hugging Face API token. SECURITY RISK: STRONGLY recommended to use HUGGING_FACE_TOKEN environment variable instead."
+logging_enabled: { type: bool, default: true, description: "Enable logging." }
+log_level: { type: enum, options: ["DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"], default: "DEBUG", description: "Minimum log level." }
+log_backup_count: { type: integer, default: 7, description: "Number of old log files to keep." }
+database_filename: { type: string, default: "llm_training_data.db", description: "SQLite DB filename." }

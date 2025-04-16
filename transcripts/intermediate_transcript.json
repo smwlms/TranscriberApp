@@ -1,0 +1,863 @@
+[
+  {
+    "text": "Ja, van wel.",
+    "start": 6.080000000000002,
+    "end": 6.92,
+    "speaker": "SPEAKER_01",
+    "words": [
+      {
+        "word": "Ja,",
+        "start": 6.080000000000002,
+        "end": 6.52
+      },
+      {
+        "word": "van",
+        "start": 6.7,
+        "end": 6.74
+      },
+      {
+        "word": "wel.",
+        "start": 6.74,
+        "end": 6.92
+      }
+    ]
+  },
+  {
+    "text": "Ik was de heeding vergeten, voor die postcodeurs.",
+    "start": 7.28,
+    "end": 9.64,
+    "speaker": "SPEAKER_00",
+    "words": [
+      {
+        "word": "Ik",
+        "start": 7.28,
+        "end": 7.44
+      },
+      {
+        "word": "was",
+        "start": 7.44,
+        "end": 7.54
+      },
+      {
+        "word": "de",
+        "start": 7.54,
+        "end": 7.68
+      },
+      {
+        "word": "heeding",
+        "start": 7.68,
+        "end": 7.84
+      },
+      {
+        "word": "vergeten,",
+        "start": 7.84,
+        "end": 8.36
+      },
+      {
+        "word": "voor",
+        "start": 8.5,
+        "end": 8.72
+      },
+      {
+        "word": "die",
+        "start": 8.72,
+        "end": 8.88
+      },
+      {
+        "word": "postcodeurs.",
+        "start": 8.88,
+        "end": 9.64
+      }
+    ]
+  },
+  {
+    "text": "In uw mail zegt hij iets over dat er duplicaten kunnen zijn.",
+    "start": 10.46,
+    "end": 13.88,
+    "speaker": "SPEAKER_00",
+    "words": [
+      {
+        "word": "In",
+        "start": 10.46,
+        "end": 10.66
+      },
+      {
+        "word": "uw",
+        "start": 10.66,
+        "end": 10.76
+      },
+      {
+        "word": "mail",
+        "start": 10.76,
+        "end": 11.16
+      },
+      {
+        "word": "zegt",
+        "start": 11.16,
+        "end": 11.78
+      },
+      {
+        "word": "hij",
+        "start": 11.78,
+        "end": 11.92
+      },
+      {
+        "word": "iets",
+        "start": 11.92,
+        "end": 12.08
+      },
+      {
+        "word": "over",
+        "start": 12.08,
+        "end": 12.3
+      },
+      {
+        "word": "dat",
+        "start": 12.3,
+        "end": 12.7
+      },
+      {
+        "word": "er",
+        "start": 12.7,
+        "end": 12.86
+      },
+      {
+        "word": "duplicaten",
+        "start": 12.86,
+        "end": 13.38
+      },
+      {
+        "word": "kunnen",
+        "start": 13.38,
+        "end": 13.58
+      },
+      {
+        "word": "zijn.",
+        "start": 13.58,
+        "end": 13.88
+      }
+    ]
+  },
+  {
+    "text": "Dus het is mogelijk dat maakelaars dezelfde postcodeurs opgeven.",
+    "start": 14.14,
+    "end": 19.24,
+    "speaker": "SPEAKER_00",
+    "words": [
+      {
+        "word": "Dus",
+        "start": 14.14,
+        "end": 14.2
+      },
+      {
+        "word": "het",
+        "start": 14.2,
+        "end": 14.34
+      },
+      {
+        "word": "is",
+        "start": 14.34,
+        "end": 14.44
+      },
+      {
+        "word": "mogelijk",
+        "start": 14.44,
+        "end": 14.92
+      },
+      {
+        "word": "dat",
+        "start": 14.92,
+        "end": 15.14
+      },
+      {
+        "word": "maakelaars",
+        "start": 15.14,
+        "end": 15.84
+      },
+      {
+        "word": "dezelfde",
+        "start": 15.84,
+        "end": 18.08
+      },
+      {
+        "word": "postcodeurs",
+        "start": 18.08,
+        "end": 18.68
+      },
+      {
+        "word": "opgeven.",
+        "start": 18.68,
+        "end": 19.24
+      }
+    ]
+  },
+  {
+    "text": "Ja, maar dat moet jullie zeggen op zich niks van A2M1.",
+    "start": 19.900000000000002,
+    "end": 25.0,
+    "speaker": "SPEAKER_01",
+    "words": [
+      {
+        "word": "Ja,",
+        "start": 19.900000000000002,
+        "end": 20.34
+      },
+      {
+        "word": "maar",
+        "start": 20.88,
+        "end": 21.06
+      },
+      {
+        "word": "dat",
+        "start": 21.06,
+        "end": 21.18
+      },
+      {
+        "word": "moet",
+        "start": 21.18,
+        "end": 21.4
+      },
+      {
+        "word": "jullie",
+        "start": 21.4,
+        "end": 23.46
+      },
+      {
+        "word": "zeggen",
+        "start": 23.46,
+        "end": 23.72
+      },
+      {
+        "word": "op",
+        "start": 23.72,
+        "end": 23.84
+      },
+      {
+        "word": "zich",
+        "start": 23.84,
+        "end": 24.0
+      },
+      {
+        "word": "niks",
+        "start": 24.0,
+        "end": 24.24
+      },
+      {
+        "word": "van",
+        "start": 24.24,
+        "end": 24.46
+      },
+      {
+        "word": "A2M1.",
+        "start": 24.46,
+        "end": 25.0
+      }
+    ]
+  },
+  {
+    "text": "Ja, dat postmaakt niet uit, dus wij moeten ze wel dedupliceren.",
+    "start": 25.02,
+    "end": 27.3,
+    "speaker": "SPEAKER_00",
+    "words": [
+      {
+        "word": "Ja,",
+        "start": 25.02,
+        "end": 25.02
+      },
+      {
+        "word": "dat",
+        "start": 25.02,
+        "end": 25.02
+      },
+      {
+        "word": "postmaakt",
+        "start": 25.02,
+        "end": 25.36
+      },
+      {
+        "word": "niet",
+        "start": 25.36,
+        "end": 25.52
+      },
+      {
+        "word": "uit,",
+        "start": 25.52,
+        "end": 25.66
+      },
+      {
+        "word": "dus",
+        "start": 25.8,
+        "end": 25.8
+      },
+      {
+        "word": "wij",
+        "start": 25.8,
+        "end": 25.88
+      },
+      {
+        "word": "moeten",
+        "start": 25.88,
+        "end": 26.02
+      },
+      {
+        "word": "ze",
+        "start": 26.02,
+        "end": 26.2
+      },
+      {
+        "word": "wel",
+        "start": 26.2,
+        "end": 26.46
+      },
+      {
+        "word": "dedupliceren.",
+        "start": 26.46,
+        "end": 27.3
+      }
+    ]
+  },
+  {
+    "text": "Ja, jullie moeten gewoon weten dat, inderdaad, als je alle felden binnenhaalt,",
+    "start": 28.240000000000002,
+    "end": 32.86,
+    "speaker": "SPEAKER_01",
+    "words": [
+      {
+        "word": "Ja,",
+        "start": 28.240000000000002,
+        "end": 28.6
+      },
+      {
+        "word": "jullie",
+        "start": 28.92,
+        "end": 28.92
+      },
+      {
+        "word": "moeten",
+        "start": 28.92,
+        "end": 30.24
+      },
+      {
+        "word": "gewoon",
+        "start": 30.24,
+        "end": 30.48
+      },
+      {
+        "word": "weten",
+        "start": 30.48,
+        "end": 30.74
+      },
+      {
+        "word": "dat,",
+        "start": 30.74,
+        "end": 30.96
+      },
+      {
+        "word": "inderdaad,",
+        "start": 31.0,
+        "end": 31.48
+      },
+      {
+        "word": "als",
+        "start": 31.52,
+        "end": 31.62
+      },
+      {
+        "word": "je",
+        "start": 31.62,
+        "end": 31.74
+      },
+      {
+        "word": "alle",
+        "start": 31.74,
+        "end": 31.96
+      },
+      {
+        "word": "felden",
+        "start": 31.96,
+        "end": 32.3
+      },
+      {
+        "word": "binnenhaalt,",
+        "start": 32.3,
+        "end": 32.86
+      }
+    ]
+  },
+  {
+    "text": "er alle postcodeurs uit, dat voorbeeld de postcode, ik zeg niet maar,",
+    "start": 33.18,
+    "end": 36.08,
+    "speaker": "SPEAKER_01",
+    "words": [
+      {
+        "word": "er",
+        "start": 33.18,
+        "end": 33.4
+      },
+      {
+        "word": "alle",
+        "start": 33.4,
+        "end": 33.56
+      },
+      {
+        "word": "postcodeurs",
+        "start": 33.56,
+        "end": 34.18
+      },
+      {
+        "word": "uit,",
+        "start": 34.18,
+        "end": 34.26
+      },
+      {
+        "word": "dat",
+        "start": 34.36,
+        "end": 34.42
+      },
+      {
+        "word": "voorbeeld",
+        "start": 34.42,
+        "end": 34.82
+      },
+      {
+        "word": "de",
+        "start": 34.82,
+        "end": 35.0
+      },
+      {
+        "word": "postcode,",
+        "start": 35.0,
+        "end": 35.44
+      },
+      {
+        "word": "ik",
+        "start": 35.56,
+        "end": 35.7
+      },
+      {
+        "word": "zeg",
+        "start": 35.7,
+        "end": 35.82
+      },
+      {
+        "word": "niet",
+        "start": 35.82,
+        "end": 35.94
+      },
+      {
+        "word": "maar,",
+        "start": 35.94,
+        "end": 36.08
+      }
+    ]
+  },
+  {
+    "text": "iets klopt niet, maar 9000 ter 2 keer kan voorkomen.",
+    "start": 36.16,
+    "end": 38.76,
+    "speaker": "SPEAKER_01",
+    "words": [
+      {
+        "word": "iets",
+        "start": 36.16,
+        "end": 36.3
+      },
+      {
+        "word": "klopt",
+        "start": 36.3,
+        "end": 36.46
+      },
+      {
+        "word": "niet,",
+        "start": 36.46,
+        "end": 36.66
+      },
+      {
+        "word": "maar",
+        "start": 36.74,
+        "end": 36.84
+      },
+      {
+        "word": "9000",
+        "start": 36.84,
+        "end": 37.46
+      },
+      {
+        "word": "ter",
+        "start": 37.46,
+        "end": 37.66
+      },
+      {
+        "word": "2",
+        "start": 37.66,
+        "end": 37.82
+      },
+      {
+        "word": "keer",
+        "start": 37.82,
+        "end": 37.98
+      },
+      {
+        "word": "kan",
+        "start": 37.98,
+        "end": 38.24
+      },
+      {
+        "word": "voorkomen.",
+        "start": 38.24,
+        "end": 38.76
+      }
+    ]
+  },
+  {
+    "text": "En dat jullie die 9000, dat dat systeem niet bokt, op het feit dat 9000 ter 2 keer in staat.",
+    "start": 39.82,
+    "end": 45.04,
+    "speaker": "SPEAKER_01",
+    "words": [
+      {
+        "word": "En",
+        "start": 39.82,
+        "end": 40.18
+      },
+      {
+        "word": "dat",
+        "start": 40.18,
+        "end": 40.28
+      },
+      {
+        "word": "jullie",
+        "start": 40.28,
+        "end": 40.46
+      },
+      {
+        "word": "die",
+        "start": 40.46,
+        "end": 40.64
+      },
+      {
+        "word": "9000,",
+        "start": 40.64,
+        "end": 41.18
+      },
+      {
+        "word": "dat",
+        "start": 41.32,
+        "end": 41.72
+      },
+      {
+        "word": "dat",
+        "start": 41.72,
+        "end": 41.92
+      },
+      {
+        "word": "systeem",
+        "start": 41.92,
+        "end": 42.64
+      },
+      {
+        "word": "niet",
+        "start": 42.64,
+        "end": 42.78
+      },
+      {
+        "word": "bokt,",
+        "start": 42.78,
+        "end": 43.12
+      },
+      {
+        "word": "op",
+        "start": 43.14,
+        "end": 43.24
+      },
+      {
+        "word": "het",
+        "start": 43.24,
+        "end": 43.36
+      },
+      {
+        "word": "feit",
+        "start": 43.36,
+        "end": 43.5
+      },
+      {
+        "word": "dat",
+        "start": 43.5,
+        "end": 43.62
+      },
+      {
+        "word": "9000",
+        "start": 43.62,
+        "end": 44.22
+      },
+      {
+        "word": "ter",
+        "start": 44.22,
+        "end": 44.38
+      },
+      {
+        "word": "2",
+        "start": 44.38,
+        "end": 44.54
+      },
+      {
+        "word": "keer",
+        "start": 44.54,
+        "end": 44.68
+      },
+      {
+        "word": "in",
+        "start": 44.68,
+        "end": 44.82
+      },
+      {
+        "word": "staat.",
+        "start": 44.82,
+        "end": 45.04
+      }
+    ]
+  },
+  {
+    "text": "Ja, maar ik kan dat precies niet meer antassen.",
+    "start": 45.52,
+    "end": 47.98,
+    "speaker": "SPEAKER_00",
+    "words": [
+      {
+        "word": "Ja,",
+        "start": 45.52,
+        "end": 45.88
+      },
+      {
+        "word": "maar",
+        "start": 46.52,
+        "end": 46.68
+      },
+      {
+        "word": "ik",
+        "start": 46.68,
+        "end": 46.76
+      },
+      {
+        "word": "kan",
+        "start": 46.76,
+        "end": 46.9
+      },
+      {
+        "word": "dat",
+        "start": 46.9,
+        "end": 47.08
+      },
+      {
+        "word": "precies",
+        "start": 47.08,
+        "end": 47.32
+      },
+      {
+        "word": "niet",
+        "start": 47.32,
+        "end": 47.5
+      },
+      {
+        "word": "meer",
+        "start": 47.5,
+        "end": 47.66
+      },
+      {
+        "word": "antassen.",
+        "start": 47.66,
+        "end": 47.98
+      }
+    ]
+  },
+  {
+    "text": "Oké, cool.",
+    "start": 49.06,
+    "end": 49.64,
+    "speaker": "SPEAKER_01",
+    "words": [
+      {
+        "word": "Oké,",
+        "start": 49.06,
+        "end": 49.42
+      },
+      {
+        "word": "cool.",
+        "start": 49.44,
+        "end": 49.64
+      }
+    ]
+  },
+  {
+    "text": "Dat moet jullie doen en wij zorgen dan in turn wel dat ze gepliceerd worden.",
+    "start": 50.32,
+    "end": 53.88,
+    "speaker": "SPEAKER_01",
+    "words": [
+      {
+        "word": "Dat",
+        "start": 50.32,
+        "end": 50.48
+      },
+      {
+        "word": "moet",
+        "start": 50.48,
+        "end": 50.6
+      },
+      {
+        "word": "jullie",
+        "start": 50.6,
+        "end": 50.76
+      },
+      {
+        "word": "doen",
+        "start": 50.76,
+        "end": 51.04
+      },
+      {
+        "word": "en",
+        "start": 51.04,
+        "end": 51.24
+      },
+      {
+        "word": "wij",
+        "start": 51.24,
+        "end": 51.38
+      },
+      {
+        "word": "zorgen",
+        "start": 51.38,
+        "end": 51.66
+      },
+      {
+        "word": "dan",
+        "start": 51.66,
+        "end": 51.78
+      },
+      {
+        "word": "in",
+        "start": 51.78,
+        "end": 51.98
+      },
+      {
+        "word": "turn",
+        "start": 51.98,
+        "end": 52.14
+      },
+      {
+        "word": "wel",
+        "start": 52.14,
+        "end": 52.36
+      },
+      {
+        "word": "dat",
+        "start": 52.36,
+        "end": 52.54
+      },
+      {
+        "word": "ze",
+        "start": 52.54,
+        "end": 53.0
+      },
+      {
+        "word": "gepliceerd",
+        "start": 53.0,
+        "end": 53.68
+      },
+      {
+        "word": "worden.",
+        "start": 53.68,
+        "end": 53.88
+      }
+    ]
+  },
+  {
+    "text": "Dat is onze dingen.",
+    "start": 54.08,
+    "end": 55.5,
+    "speaker": "SPEAKER_01",
+    "words": [
+      {
+        "word": "Dat",
+        "start": 54.08,
+        "end": 54.18
+      },
+      {
+        "word": "is",
+        "start": 54.18,
+        "end": 54.32
+      },
+      {
+        "word": "onze",
+        "start": 54.32,
+        "end": 54.46
+      },
+      {
+        "word": "dingen.",
+        "start": 54.46,
+        "end": 55.5
+      }
+    ]
+  },
+  {
+    "text": "Goed?",
+    "start": 55.78,
+    "end": 55.9,
+    "speaker": "SPEAKER_00",
+    "words": [
+      {
+        "word": "Goed?",
+        "start": 55.78,
+        "end": 55.9
+      }
+    ]
+  },
+  {
+    "text": "Ja, dat is goed.",
+    "start": 55.9,
+    "end": 57.42,
+    "speaker": "SPEAKER_00",
+    "words": [
+      {
+        "word": "Ja,",
+        "start": 55.9,
+        "end": 56.7
+      },
+      {
+        "word": "dat",
+        "start": 56.94,
+        "end": 57.18
+      },
+      {
+        "word": "is",
+        "start": 57.18,
+        "end": 57.26
+      },
+      {
+        "word": "goed.",
+        "start": 57.26,
+        "end": 57.42
+      }
+    ]
+  },
+  {
+    "text": "Oké, inderdaad.",
+    "start": 58.260000000000005,
+    "end": 59.26,
+    "speaker": "SPEAKER_01",
+    "words": [
+      {
+        "word": "Oké,",
+        "start": 58.260000000000005,
+        "end": 58.74
+      },
+      {
+        "word": "inderdaad.",
+        "start": 58.82,
+        "end": 59.26
+      }
+    ]
+  }
+]

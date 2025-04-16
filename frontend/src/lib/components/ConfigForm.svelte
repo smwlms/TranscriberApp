@@ -2,7 +2,7 @@
     import { configInfo, jobConfigOverrides, selectedPreset } from '../stores.js';
     import { tick, onDestroy } from 'svelte';
   
-    // Local state for accordion visibility
+    // Local state for accordion visibility (start collapsed)
     let transcriptionVisible = false;
     let speakerVisible = false;
     let analysisVisible = false;
@@ -14,30 +14,33 @@
         schema = value.schema || {};
         detectedDevice = value.detected_device;
     });
-    // jobConfigOverrides store is bound directly in the template using bind:value
+    // We bind form elements directly to the $jobConfigOverrides store below
   
-    // --- Preset Definitions (using user chosen names) ---
+    // --- Preset Definitions (using user chosen names & new keys) ---
     const presetsConfig = {
       quick: {
         mode: 'fast',
         whisper_model: 'tiny',
-        compute_type: 'int8', // Will be adjusted by compatibility check if needed
-        speaker_name_detection_enabled: false,
-        language: null,
+        compute_type: 'int8', // Base value, will be adjusted by compatibility check
+        speaker_name_detection_enabled: false, // Explicitly disable for speed
+        language: null, // Use schema default (auto)
+        word_timestamps_enabled: false // Disable for speed
       },
-      standard: { // Should align with most schema defaults
+      standard: { // Should align with most schema defaults, but ensure name detection is off by default now
         mode: 'fast',
         whisper_model: 'small',
         compute_type: 'int8',
-        speaker_name_detection_enabled: true, // Diarization itself always runs
+        speaker_name_detection_enabled: false, // Default to false after schema change
         language: null,
+        word_timestamps_enabled: false
       },
       multi: {
         mode: 'advanced',
-        whisper_model: 'medium', // User might want large-v3 depending on hardware
+        whisper_model: 'medium', // More accurate
         compute_type: 'int8',
-        speaker_name_detection_enabled: true,
+        speaker_name_detection_enabled: false, // Keep default off unless user enables
         language: null,
+        word_timestamps_enabled: true // Enable words for advanced analysis
       }
     };
   
@@ -50,12 +53,15 @@
         error: ['int8', 'float16', 'int16', 'bfloat16', 'float32'], // Fallback: show all
     };
     let availableComputeTypes = [];
-    $: { // Calculate available compute types reactively
-        if (schema?.compute_type?.options && detectedDevice && typeof detectedDevice === 'string') { // Added string check
+    $: { // Calculate available compute types reactively based on detected device
+        if (schema?.compute_type?.options && detectedDevice && typeof detectedDevice === 'string') {
             const compatibleTypes = COMPATIBILITY_RULES[detectedDevice] || COMPATIBILITY_RULES['unknown'];
             availableComputeTypes = schema.compute_type.options.filter(option => compatibleTypes.includes(option));
             log(`Device: ${detectedDevice}. Available compute types:`, availableComputeTypes);
-        } else { availableComputeTypes = schema?.compute_type?.options || []; }
+        } else {
+            // Use all schema options if device detection hasn't run or failed
+            availableComputeTypes = schema?.compute_type?.options || [];
+        }
     }
   
     // --- Store Schema Defaults ---
@@ -83,17 +89,20 @@
     // --- Function to Apply Presets (called reactively) ---
     function applyPreset(presetKey) {
         // Only run if defaults are ready and presetKey is valid
-        if (!presetKey || !defaultsInitialized || !presetsConfig[presetKey]) return;
+        if (!presetKey || !defaultsInitialized || !presetsConfig[presetKey]) {
+            log(`Skipping preset application (key: ${presetKey}, defaults init: ${defaultsInitialized})`);
+            return;
+        }
   
         log(`Applying preset: ${presetKey}`);
         const presetValues = presetsConfig[presetKey];
   
-        // Start with schema defaults, then merge preset values
+        // Start with schema defaults, then merge preset values on top
         let mergedOverrides = { ...schemaDefaults, ...presetValues };
   
         // Adjust compute_type based on device compatibility AFTER merging preset value
         const targetComputeType = mergedOverrides['compute_type'];
-        // Ensure availableComputeTypes is calculated before this check runs
+        // Ensure availableComputeTypes is calculated and device is known before adjusting
         if (detectedDevice && availableComputeTypes.length > 0) {
             if (!availableComputeTypes.includes(targetComputeType)) {
                  const newComputeType = availableComputeTypes[0]; // Fallback to first compatible type
@@ -101,8 +110,8 @@
                  mergedOverrides['compute_type'] = newComputeType;
             }
         } else if (schema?.compute_type?.options && !schema.compute_type.options.includes(targetComputeType)) {
-             // Fallback if device detection failed but default compute type is invalid somehow
-             log(`Preset compute_type '${targetComputeType}' invalid. Using schema default '${schema.compute_type.default}'.`, "WARN");
+             // Fallback if device detection failed but preset compute type is invalid
+             log(`Preset compute_type '${targetComputeType}' not in schema options. Using schema default '${schema.compute_type.default}' instead.`, "WARN");
              mergedOverrides['compute_type'] = schema.compute_type.default;
         }
   
@@ -110,6 +119,8 @@
         let currentOverridesValue;
         const unsubscribe = jobConfigOverrides.subscribe(v => currentOverridesValue = v);
         unsubscribe(); // Get current value then unsubscribe immediately
+        // Only update if the calculated merged values actually differ from current store
+        // to prevent potential reactive loops if presets match current state
         if(JSON.stringify(currentOverridesValue) !== JSON.stringify(mergedOverrides)){
             jobConfigOverrides.set(mergedOverrides);
             log('Applied preset overrides:', mergedOverrides);
@@ -163,7 +174,7 @@
           {#if transcriptionVisible}
             <div id="transcription-panel" class="p-4 space-y-4 border-t border-gray-200 dark:border-gray-700">
               {#each Object.entries(schema) as [key, spec] (key)}
-                {#if (key === 'whisper_model' || key === 'compute_type' || key === 'language') && editableTypes.includes(spec.type) && !excludedKeys.includes(key)}
+                {#if (key === 'whisper_model' || key === 'compute_type' || key === 'language' || key === 'word_timestamps_enabled') && editableTypes.includes(spec.type) && !excludedKeys.includes(key)}
                   <div class="flex flex-col">
                     <label for={key} class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                       {formatLabel(key)} {#if key === 'compute_type' && detectedDevice}(Detected: {detectedDevice || 'N/A'}){/if}
@@ -174,7 +185,9 @@
                          {:else} {#each spec.options || [] as option (option)} <option value={option}>{option}</option> {/each} {/if}
                       </select>
                     {:else if spec.type === 'string'}
-                         <input id={key} type="text" bind:value={$jobConfigOverrides[key]} placeholder={key === 'language' ? "e.g., 'en' (blank=auto)" : `Default: ${spec.default}`} class="mt-1 block w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm placeholder-gray-400 dark:placeholder-gray-500">
+                         <input id={key} type="text" bind:value={$jobConfigOverrides[key]} placeholder={key === 'language' ? "e.g., 'en' (blank=auto)" : `Default: ${spec.default ?? ''}`} class="mt-1 block w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm placeholder-gray-400 dark:placeholder-gray-500">
+                    {:else if spec.type === 'bool'}
+                       <div class="flex items-center mt-1"> <input id={key} type="checkbox" bind:checked={$jobConfigOverrides[key]} class="h-4 w-4 text-indigo-600 border-gray-300 dark:border-gray-500 rounded focus:ring-indigo-500 bg-white dark:bg-gray-700"></div>
                     {/if}
                     {#if spec.description} <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{spec.description}</p> {/if}
                   </div>
@@ -196,9 +209,9 @@
                    <div class="flex flex-col">
                      <label for={key} class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{formatLabel(key)}</label>
                      {#if spec.type === 'bool'}
-                       <div class="flex items-center"> <input id={key} type="checkbox" bind:checked={$jobConfigOverrides[key]} class="mt-1 h-4 w-4 text-indigo-600 border-gray-300 dark:border-gray-500 rounded focus:ring-indigo-500 bg-white dark:bg-gray-700"></div>
+                       <div class="flex items-center mt-1"><input id={key} type="checkbox" bind:checked={$jobConfigOverrides[key]} class="h-4 w-4 text-indigo-600 border-gray-300 dark:border-gray-500 rounded focus:ring-indigo-500 bg-white dark:bg-gray-700"></div>
                      {:else if spec.type === 'string'}
-                        <input id={key} type="text" bind:value={$jobConfigOverrides[key]} placeholder="Default: {spec.default}" class="mt-1 block w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm placeholder-gray-400 dark:placeholder-gray-500">
+                        <input id={key} type="text" bind:value={$jobConfigOverrides[key]} placeholder="Default: {spec.default ?? ''}" class="mt-1 block w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm placeholder-gray-400 dark:placeholder-gray-500">
                      {/if}
                      {#if spec.description} <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{spec.description}</p> {/if}
                    </div>
@@ -230,7 +243,7 @@
                     </div>
                  {/if}
                {/each}
-               {#if schema.llm_models} <div class="pt-2"> <p class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">LLM Models Used (Read-only):</p> {#if $jobConfigOverrides.llm_models} <div class="text-xs text-gray-600 dark:text-gray-400 space-y-1"> {#each Object.entries($jobConfigOverrides.llm_models) as [task, models]} {#if models && models.length > 0} <p><span class="font-semibold">{formatLabel(task)}:</span> {models.join(', ')}</p> {/if} {/each} </div> {:else} <p class="text-xs text-gray-500 italic">(Defaults from config.yaml)</p> {/if} {#if schema.llm_models.description} <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{schema.llm_models.description}</p> {/if} </div> {/if}
+               {#if schema.llm_models} <div class="pt-2"> <p class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">LLM Models Used (Read-only):</p> {#if $jobConfigOverrides.llm_models && typeof $jobConfigOverrides.llm_models === 'object'} <div class="text-xs text-gray-600 dark:text-gray-400 space-y-1"> {#each Object.entries($jobConfigOverrides.llm_models) as [task, models]} {#if models && Array.isArray(models) && models.length > 0} <p><span class="font-semibold">{formatLabel(task)}:</span> {models.join(', ')}</p> {/if} {/each} </div> {:else} <p class="text-xs text-gray-500 italic">(Defaults from config.yaml)</p> {/if} {#if schema.llm_models.description} <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{schema.llm_models.description}</p> {/if} </div> {/if}
              </div>
            {/if}
          </div>
@@ -243,5 +256,5 @@
           background-position: right 0.5rem center; background-repeat: no-repeat; background-size: 1.5em 1.5em; padding-right: 2.5rem;
           -webkit-print-color-adjust: exact; print-color-adjust: exact; appearance: none; -webkit-appearance: none; -moz-appearance: none;
       }
-      /* The .dark select rule was removed as it's unused */
+      /* Style removed for .dark select as it was unused */
   </style>

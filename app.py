@@ -1,9 +1,9 @@
-# app.py
+# File: app.py
 import os
 import traceback
 import time
 from pathlib import Path
-from flask import Flask, jsonify, request # Keep request for error handlers
+from flask import Flask, jsonify, request
 from dotenv import load_dotenv
 load_dotenv() # Load environment variables early
 
@@ -43,28 +43,36 @@ try:
     log("Loading UI schema info...", "INFO")
     schema_info = parse_schema_for_ui()
     if not schema_info: log("Schema info could not be loaded/parsed.", "ERROR")
-    # Store parsed schema in app config for access in routes
     app.config['SCHEMA_INFO_FOR_UI'] = schema_info
     log("Schema info loaded into app config.", "DEBUG")
 except Exception as e:
      log(f"CRITICAL: Failed to load schema info at startup: {e}", "CRITICAL")
-     app.config['SCHEMA_INFO_FOR_UI'] = {} # Ensure key exists even on failure
+     app.config['SCHEMA_INFO_FOR_UI'] = {}
 
 
 # --- Import and Register Blueprints ---
 log("Registering API blueprints...", "INFO")
 from src.routes.pipeline_routes import pipeline_bp
 from src.routes.review_routes import review_bp
-from src.routes.file_routes import file_bp
+# *** MODIFICATION: Import the renamed/split blueprints ***
+from src.routes.file_routes import file_api_bp # Contains only /upload_audio API
+from src.routes.static_routes import static_files_bp # Contains /audio/ and /results/ static routes
 from src.routes.info_routes import info_bp
 
 API_PREFIX = "/api/v1"
-# Register each blueprint on its own line with the correct prefix
+
+# --- Blueprint Registration (Corrected based on split) ---
+# Register API routes WITH prefix
 app.register_blueprint(pipeline_bp, url_prefix=API_PREFIX)
 app.register_blueprint(review_bp, url_prefix=API_PREFIX)
-app.register_blueprint(file_bp, url_prefix=API_PREFIX) # Corrected: file_bp now uses prefix
+app.register_blueprint(file_api_bp, url_prefix=API_PREFIX) # Register API part with prefix
 app.register_blueprint(info_bp, url_prefix=API_PREFIX)
-log(f"Registered API blueprints (Info, Pipeline, Review, Files) with prefix: {API_PREFIX}", "INFO") # Corrected log message
+
+# Register static file serving routes WITHOUT prefix
+app.register_blueprint(static_files_bp) # Register static part without prefix
+# ------------------------------------
+# Log message reflects the intended structure
+log(f"Registered API blueprints with prefix: {API_PREFIX}. Registered static file serving blueprint.", "INFO")
 
 
 # --- Basic Error Handling & Root Endpoint ---
@@ -74,45 +82,33 @@ def health_check():
      log("Health check endpoint '/' accessed.", "DEBUG")
      return jsonify({"status": "ok", "message": "Transcriber API is running."})
 
-# --- Error Handlers ---
+# --- Error Handlers --- (Remain unchanged)
 @app.errorhandler(500)
 def handle_internal_error(error):
-    """Handles unexpected internal server errors."""
-    log(f"Internal Server Error (500): {error}", "ERROR")
-    log(traceback.format_exc(), "ERROR")
-    return jsonify(error="Internal Server Error", message="An unexpected error occurred on the server."), 500
-
+    log(f"Internal Server Error (500): {error}", "ERROR"); log(traceback.format_exc(), "ERROR")
+    return jsonify(error="Internal Server Error", message="An unexpected error occurred."), 500
 @app.errorhandler(404)
 def handle_not_found_error(error):
-     """Handles requests to non-existent routes."""
-     log(f"Not Found Error (404): Path '{request.path}'. Description: {getattr(error, 'description', 'N/A')}", "WARNING")
-     return jsonify(error="Not Found", message="The requested API endpoint or resource was not found."), 404
-
+    log(f"Not Found Error (404): Path '{request.path}'. Description: {getattr(error, 'description', 'N/A')}", "WARNING")
+    return jsonify(error="Not Found", message="The requested API endpoint or resource was not found."), 404
 @app.errorhandler(405)
 def handle_method_not_allowed(error):
-     """Handles requests with an HTTP method not allowed for the route."""
-     log(f"Method Not Allowed (405): Method '{request.method}' not allowed for path '{request.path}'.", "WARNING")
-     response = jsonify(error="Method Not Allowed", message="The method specified in the Request-Line is not allowed for the resource identified by the Request-URI.")
-     if hasattr(error, 'valid_methods') and isinstance(error.valid_methods, (list, tuple)):
-         response.headers['Allow'] = ', '.join(error.valid_methods)
-     return response, 405
-
+    log(f"Method Not Allowed (405): Method '{request.method}' not allowed for path '{request.path}'.", "WARNING")
+    response = jsonify(error="Method Not Allowed", message="The method specified is not allowed for the requested URL.")
+    if hasattr(error, 'valid_methods') and isinstance(error.valid_methods, (list, tuple)): response.headers['Allow'] = ', '.join(error.valid_methods)
+    return response, 405
 @app.errorhandler(415)
 def handle_unsupported_media_type(error):
-    """Handles requests with an unsupported Content-Type."""
     log(f"Unsupported Media Type (415): Request for '{request.path}' had unsupported Content-Type '{request.mimetype}'.", "WARNING")
-    return jsonify(error="Unsupported Media Type", message="The server cannot process the request because the payload format is not supported."), 415
+    return jsonify(error="Unsupported Media Type", message="The request content type is not supported by this endpoint."), 415
 
-
-# --- Main Execution Guard ---
+# --- Main Execution Guard --- (Remains unchanged)
 if __name__ == "__main__":
     log("Starting Flask development server directly...", "INFO")
-    host = os.environ.get("FLASK_HOST", "0.0.0.0") # Listen on all interfaces by default
-    port = int(os.environ.get("FLASK_PORT", 5001)) # Default port 5001
-    # Debug mode controlled by FLASK_DEBUG env var, defaults to True for development
+    host = os.environ.get("FLASK_HOST", "0.0.0.0")
+    port = int(os.environ.get("FLASK_PORT", 5001))
     debug_mode = os.environ.get("FLASK_DEBUG", "true").lower() in ['true', '1', 'yes']
     log(f"Running Flask app on http://{host}:{port}/ (Debug mode: {debug_mode})", "INFO")
-    # use_reloader is implicitly True when debug=True
     app.run(host=host, port=port, debug=debug_mode)
 
 # --- End of app.py ---
