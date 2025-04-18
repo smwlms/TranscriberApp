@@ -1,443 +1,346 @@
-# File: src/transcriber.py
+# File: src/transcriber.py (Refactored Orchestrator)
 
 import os
-import time
-import json
-import traceback
-import platform
 import uuid # Import uuid for unique temp filename generation
+import traceback
+import torch # <-- IMPORT TOEGEVOEGD
+import time # Import time for timing block below
+import json # Import json for testing block below
+import logging # Import logging for testing block below
 from pathlib import Path
-from typing import List, Dict, Optional, Any, Tuple # Added Tuple hint
-
-# --- Third-party library imports ---
-try:
-    from faster_whisper import WhisperModel
-    # Import Segment for type hinting whisper results more accurately
-    from faster_whisper.transcribe import Segment as WhisperSegmentObject
-except ImportError as e:
-    raise ImportError("Error: faster-whisper is not installed. Please run 'pip install faster-whisper'.") from e
-
-try:
-    import torch
-    from pyannote.audio import Pipeline as PyannotePipeline
-    # Import Annotation for type hinting diarization result
-    from pyannote.core import Segment, Annotation
-except ImportError as e:
-    raise ImportError("Error: pyannote.audio or torch is not installed. Please run 'pip install pyannote.audio torch torchaudio'.") from e
+from typing import List, Dict, Optional, Any
 
 # --- Local Imports ---
-from src.utils.log import log
-# Import the refactored audio conversion utility
+# Utilities
+from src.utils.log import log, setup_logging # Make setup_logging available for testing block
 from src.utils.audio_utils import convert_to_wav
+# Core processing modules
+from src.core.model_loader import get_compute_device, load_models
+from src.core.whisper_transcribe import run_transcription
+from src.core.pyannote_diarize import run_diarization
+from src.core.merge import merge_results
 
 # --- Constants ---
-DEFAULT_WHISPER_MODEL = "small"
-DEFAULT_COMPUTE_TYPE = "int8"
-DEFAULT_PYANNOTE_PIPELINE = "pyannote/speaker-diarization-3.1"
+# Defaults specific to the main orchestration logic
+DEFAULT_WHISPER_MODEL = "small" # Default model size if not specified
+DEFAULT_COMPUTE_TYPE = "int8" # Default compute type if not specified
+# HF Token is better handled by fetching from env here if not provided as arg
+DEFAULT_HF_TOKEN = os.environ.get("HUGGING_FACE_TOKEN")
 
-# --- Global cache for compute device ---
-_compute_device_cache: Optional[str] = None
-
-# --- Helper Function for Device Detection (CORRECTED FORMATTING) ---
-def _get_compute_device() -> str:
-    """Automatically detects and caches the optimal compute device (cuda > mps > cpu)."""
-    global _compute_device_cache
-    # Return cached value if already detected
-    if _compute_device_cache is not None:
-        return _compute_device_cache
-
-    device = "cpu" # Default fallback
-    try:
-        if torch.cuda.is_available():
-            device = "cuda"
-            log("CUDA (NVIDIA GPU) detected. Using 'cuda'.", "INFO")
-        elif platform.system() == "Darwin" and hasattr(torch.backends, "mps") and torch.backends.mps.is_available() and torch.backends.mps.is_built():
-            # Check specifically for Apple Silicon MPS support
-            device = "mps"
-            log("Apple MPS detected and available. Using 'mps'.", "INFO")
-        else:
-            # If no GPU detected or MPS not available/built
-            log("No CUDA or available MPS GPU detected. Using 'cpu'.", "INFO")
-            # device remains "cpu"
-    except Exception as e:
-        # Catch potential errors during detection (e.g., library issues)
-        log(f"Error during compute device detection: {e}. Falling back to 'cpu'.", "WARNING")
-        device = "cpu" # Ensure fallback on error
-
-    # Cache and return the determined device
-    _compute_device_cache = device
-    return device
-
-# --- Internal Helper Functions for Transcription and Diarization ---
-
-def _load_models(
-    whisper_model_size: str,
-    compute_type: str,
-    pyannote_pipeline_name: str,
-    hf_token: Optional[str],
-    compute_device: str
-    ) -> Tuple[Optional[WhisperModel], Optional[PyannotePipeline]]:
-    """Loads Whisper and Pyannote models onto the specified device."""
-    whisper_model = None
-    diarization_pipeline = None
-    log(f"Attempting to load models (Whisper: {whisper_model_size}, Pyannote: {pyannote_pipeline_name}) on device '{compute_device}'...", "INFO")
-
-    try:
-        # Determine torch device object for Pyannote
-        pyannote_torch_device = torch.device(compute_device) # Use the determined device string
-
-        # Load FasterWhisper model
-        log(f"Loading Whisper model '{whisper_model_size}' (Compute: {compute_type})...", "DEBUG")
-        # Use 'auto' device argument for Whisper when MPS is detected for best compatibility
-        whisper_device_arg = "auto" if compute_device == "mps" else compute_device
-        whisper_model = WhisperModel(whisper_model_size, device=whisper_device_arg, compute_type=compute_type)
-        log("Whisper model loaded successfully.", "SUCCESS")
-
-        # Load Pyannote pipeline
-        log(f"Loading Pyannote pipeline '{pyannote_pipeline_name}'...", "DEBUG")
-        auth_token_arg = {"use_auth_token": hf_token} if hf_token else {}
-        if not hf_token: log("Hugging Face token not provided. Pyannote model loading might fail if authentication is required.", "WARNING")
-        diarization_pipeline = PyannotePipeline.from_pretrained(pyannote_pipeline_name, **auth_token_arg)
-        diarization_pipeline.to(pyannote_torch_device) # Move pipeline to target device
-        log(f"Pyannote pipeline loaded successfully onto device '{pyannote_torch_device}'.", "SUCCESS")
-
-        return whisper_model, diarization_pipeline
-
-    except Exception as e:
-        # Log loading errors clearly
-        failed_model = whisper_model_size if whisper_model is None else pyannote_pipeline_name
-        log(f"Error loading AI model '{failed_model}': {e}", "CRITICAL")
-        log("Check model names, Hugging Face token/terms, network connection, and system requirements (RAM/VRAM).", "ERROR")
-        log(traceback.format_exc(), "DEBUG") # Log full traceback for detailed debugging
-        return None, None # Return None tuple on failure
-
-
-# *** MODIFICATION 1: Add 'word_timestamps_enabled' argument to signature ***
-def _run_transcription(
-    whisper_model: WhisperModel,
-    wav_path: Path,
-    language: Optional[str],
-    word_timestamps_enabled: bool # <-- ADDED ARGUMENT
-    ) -> Optional[List[WhisperSegmentObject]]: # <-- Changed return type hint
-    """Runs Whisper transcription on the provided WAV audio file."""
-    # Log the setting being used
-    log(f"Starting transcription on '{wav_path.name}' (Word Timestamps: {word_timestamps_enabled})...", "INFO")
-    try:
-        start_time = time.time()
-        # Transcribe the audio file
-        segments_generator, info = whisper_model.transcribe(
-            str(wav_path),
-            beam_size=5,            # Standard beam size for decoding
-            language=language,      # None for auto-detect, or specify e.g., "en"
-            # *** MODIFICATION 2: Pass the argument to the transcribe call ***
-            word_timestamps=word_timestamps_enabled
-        )
-        # Collect all segments from the generator into a list
-        # These are faster_whisper Segment objects
-        whisper_results: List[WhisperSegmentObject] = list(segments_generator) # Added type hint
-        elapsed = round(time.time() - start_time, 2)
-
-        # Log transcription results
-        log(f"Transcription completed in {elapsed}s. Found {len(whisper_results)} segments.", "SUCCESS")
-        log(f"Detected language: {info.language} (Confidence: {info.language_probability:.2f})", "INFO")
-        return whisper_results
-
-    except Exception as e:
-        log(f"Transcription step failed: {e}", "ERROR")
-        log(traceback.format_exc(), "DEBUG")
-        return None # Return None on failure
-
-
-def _run_diarization(
-    diarization_pipeline: PyannotePipeline,
-    wav_path: Path
-    ) -> Optional[Annotation]:
-    """Runs Pyannote speaker diarization on the WAV audio file."""
-    log(f"Starting speaker diarization on '{wav_path.name}'...", "INFO")
-    try:
-        start_time = time.time()
-        # Apply the diarization pipeline to the audio file
-        diarization_result: Annotation = diarization_pipeline(str(wav_path))
-        elapsed = round(time.time() - start_time, 2)
-
-        # Log diarization results
-        if diarization_result:
-             num_speakers = len(diarization_result.labels())
-             log(f"Diarization completed in {elapsed}s. Detected {num_speakers} speakers.", "SUCCESS")
-             if num_speakers > 0: log(f"Detected speaker labels: {diarization_result.labels()}", "DEBUG")
-        else:
-             log("Diarization completed but produced no result (empty annotation).", "WARNING")
-
-        return diarization_result
-
-    except Exception as e:
-        log(f"Speaker diarization step failed: {e}", "ERROR")
-        log("Check Hugging Face token validity, model terms acceptance, and input audio integrity.", "ERROR")
-        log(traceback.format_exc(), "DEBUG")
-        return None # Return None on failure
-
-
-# *** MODIFICATION 3: Adapt _merge_results to handle word data ***
-def _merge_results(
-    whisper_segments: List[WhisperSegmentObject], # Use specific type hint
-    diarization_result: Optional[Annotation] # Result from Pyannote pipeline
-    ) -> Optional[List[Dict[str, Any]]]:
-    """
-    Merges Whisper transcription segments with Pyannote diarization results
-    by assigning a speaker label to each text segment. Includes word-level
-    timestamp data if available in the Whisper segments.
-    """
-    final_merged_segments: List[Dict[str, Any]] = []
-    log("Merging transcription and diarization results...", "INFO")
-
-    if not diarization_result:
-        log("Diarization result is missing. Assigning 'SPEAKER_UNKNOWN' to all segments.", "WARNING")
-        # Fallback: If diarization failed or returned None, create segments with UNKNOWN speaker
-        for i, segment_info in enumerate(whisper_segments):
-            segment_data = {
-                "text": getattr(segment_info, 'text', '').strip(),
-                "start": getattr(segment_info, 'start', 0.0),
-                "end": getattr(segment_info, 'end', 0.0),
-                "speaker": "SPEAKER_UNKNOWN" # Assign fallback speaker ID
-            }
-            # --- Add word data handling even in fallback ---
-            if hasattr(segment_info, 'words') and segment_info.words:
-                segment_data["words"] = [
-                    {"word": word.word.strip(), "start": word.start, "end": word.end}
-                    for word in segment_info.words
-                ]
-            else:
-                 segment_data["words"] = []
-            # ---------------------------------------------
-            final_merged_segments.append(segment_data)
-        return final_merged_segments
-
-    try:
-        # Iterate through each text segment identified by Whisper
-        for i, segment_info in enumerate(whisper_segments):
-            # Extract time and text from Whisper segment object safely
-            segment_start = getattr(segment_info, 'start', 0.0)
-            segment_end = getattr(segment_info, 'end', 0.0)
-            segment_text = getattr(segment_info, 'text', '').strip()
-
-            # Create a Pyannote Segment object representing the Whisper segment's time span
-            whisper_segment_time = Segment(segment_start, segment_end)
-            speaker_label = "SPEAKER_ERROR" # Default label if merging logic fails for a segment
-
-            try:
-                # Crop the diarization timeline to this specific segment's time range
-                cropped_annotation: Annotation = diarization_result.crop(whisper_segment_time)
-
-                # Check if any speaker was active during this segment according to Pyannote
-                if not cropped_annotation or not cropped_annotation.labels():
-                    speaker_label = "SPEAKER_UNKNOWN" # Assign if no speaker activity found
-                    log(f"Segment {i+1} [{segment_start:.2f}-{segment_end:.2f}]: No speaker activity detected by Pyannote.", "DEBUG")
-                else:
-                    # Find the speaker label with the maximum duration within this segment
-                    speaker_label = cropped_annotation.argmax()
-                    log(f"Segment {i+1} [{segment_start:.2f}-{segment_end:.2f}] -> Assigned Speaker '{speaker_label}'.", "DEBUG")
-
-            except Exception as merge_err:
-                # Log errors during the crop/argmax process for a specific segment
-                log(f"Error merging speaker for segment {i+1} [{segment_start:.2f}-{segment_end:.2f}]: {merge_err}", "WARNING")
-                # Keep the 'SPEAKER_ERROR' label assigned above
-
-            # --- Create base segment data dictionary ---
-            segment_data = {
-                "text": segment_text,
-                "start": segment_start,
-                "end": segment_end,
-                "speaker": speaker_label
-            }
-
-            # --- Add word data if available ---
-            # Check if the segment object has a 'words' attribute and if it's not empty
-            if hasattr(segment_info, 'words') and segment_info.words:
-                # Format the word data into the structure expected by the frontend
-                segment_data["words"] = [
-                    {"word": word.word.strip(), "start": word.start, "end": word.end}
-                    for word in segment_info.words
-                ]
-            else:
-                # If no words attribute or it's empty, add an empty list for consistency
-                segment_data["words"] = []
-            # ------------------------------------
-
-            # Append the merged segment information (text, times, speaker, words) to the final list
-            final_merged_segments.append(segment_data)
-
-        log("Merge of transcription and diarization results completed successfully.", "SUCCESS")
-        return final_merged_segments
-
-    except Exception as e:
-        # Catch unexpected errors during the overall merging loop
-        log(f"Merging results failed overall: {e}", "ERROR")
-        log(traceback.format_exc(), "DEBUG")
-        return None # Return None if the merge process fails
-
+# --- Internal Helper Function ---
 
 def _cleanup_temp_file(temp_file_path: Optional[Path], original_input_path: Path):
     """Removes the temporary WAV file if it exists and is different from the original input."""
-    if temp_file_path and temp_file_path.exists() and temp_file_path.resolve() != original_input_path.resolve():
-        log(f"Attempting to remove temporary file: {temp_file_path.name}", "DEBUG")
-        try:
-            temp_file_path.unlink()
-            log(f"Temporary WAV file removed successfully.", "INFO")
-        except OSError as e:
-            # Log failure to remove, but don't treat as a critical error preventing results
-            log(f"Failed to remove temporary WAV file '{temp_file_path.name}': {e}", "WARNING")
+    # Check if a temp path was actually created and exists
+    if temp_file_path and temp_file_path.is_file():
+        # Ensure we don't delete the original if it was already a WAV
+        if temp_file_path.resolve() != original_input_path.resolve():
+            log(f"Attempting to remove temporary file: {temp_file_path.name}", "DEBUG")
+            try:
+                temp_file_path.unlink()
+                log(f"Temporary WAV file removed successfully.", "INFO")
+            except OSError as e:
+                # Log failure to remove, but don't treat as a critical error
+                log(f"Failed to remove temporary WAV file '{temp_file_path.name}': {e}", "WARNING")
+        else:
+            log(f"Skipping removal of temporary file as it's the same as the input: {temp_file_path.name}", "DEBUG")
+    elif temp_file_path:
+        log(f"Temporary file path '{temp_file_path}' provided but file does not exist. No cleanup needed.", "DEBUG")
 
 
 # --- Main Public Function ---
 
-# *** MODIFICATION 4: Ensure 'word_timestamps_enabled' is in the signature (already present in user's code) ***
 def transcribe_and_diarize(
     input_audio_path: Path,
     whisper_model_size: str = DEFAULT_WHISPER_MODEL,
     compute_type: str = DEFAULT_COMPUTE_TYPE,
     language: Optional[str] = None,
-    hf_token: Optional[str] = os.environ.get("HUGGING_FACE_TOKEN"), # Default to env var
-    pyannote_pipeline_name: str = DEFAULT_PYANNOTE_PIPELINE,
-    word_timestamps_enabled: bool = False, # Default is False
+    hf_token: Optional[str] = DEFAULT_HF_TOKEN, # Use default from constant/env
+    pyannote_pipeline_name: Optional[str] = None, # Allow override, defaults handled in loader
+    word_timestamps_enabled: bool = False,
+    # Diarization hints
+    num_speakers: Optional[int] = None,
+    min_speakers: Optional[int] = None,
+    max_speakers: Optional[int] = None,
+    # Allow device override
+    compute_device_override: Optional[str] = None
 ) -> Optional[List[Dict[str, Any]]]:
     """
-    Performs transcription and diarization using a structured workflow with helper functions.
+    Orchestrates transcription and diarization using refactored core modules.
 
     Args:
         input_audio_path: Path to the input audio file.
-        whisper_model_size: Size of the FasterWhisper model.
-        compute_type: Compute type for Whisper.
+        whisper_model_size: Size of the FasterWhisper model (e.g., "tiny").
+        compute_type: Compute type for Whisper (e.g., "int8").
         language: Optional language code for transcription (None for auto-detect).
-        hf_token: Hugging Face API token for Pyannote model access.
-        pyannote_pipeline_name: Name of the Pyannote pipeline model.
-        word_timestamps_enabled: Set to True to generate word-level timestamps (slower).
+        hf_token: Optional Hugging Face API token (defaults to env var).
+        pyannote_pipeline_name: Optional Pyannote pipeline name (defaults handled in loader).
+        word_timestamps_enabled: Set to True to generate word-level timestamps.
+        num_speakers: Optional fixed number of speakers hint for diarization.
+        min_speakers: Optional minimum number of speakers hint.
+        max_speakers: Optional maximum number of speakers hint.
+        compute_device_override: Optionally force "cuda", "mps", or "cpu".
 
     Returns:
         A list of merged segment dictionaries (with 'text', 'start', 'end', 'speaker', 'words'),
-        or None if a critical error occurs.
+        or None if a critical error occurs during the process.
     """
     log(f"Starting transcription & diarization process for: {input_audio_path.name}", "INFO")
-    if not input_audio_path.is_file():
-        log(f"Input audio file not found: {input_audio_path}", "ERROR")
+    start_process_time = time.time() # For overall timing
+
+    if not isinstance(input_audio_path, Path) or not input_audio_path.is_file():
+        log(f"Input audio file not found or invalid path: {input_audio_path}", "CRITICAL")
         return None
 
     # Initialize variables
     temp_wav_path: Optional[Path] = None
-    whisper_model: Optional[WhisperModel] = None
-    diarization_pipeline: Optional[PyannotePipeline] = None
+    whisper_model = None # Explicitly define to ensure cleanup scope
+    diarization_pipeline = None # Explicitly define
     final_result: Optional[List[Dict[str, Any]]] = None
+    conversion_needed = False # Track if conversion happened for cleanup logic
 
     try:
         # Step 1: Determine Compute Device
-        compute_device = _get_compute_device()
-        if not compute_device: # Should not happen based on _get_compute_device logic
-             raise RuntimeError("Could not determine compute device.")
+        # Use override if provided, otherwise auto-detect
+        compute_device = compute_device_override or get_compute_device()
+        log(f"Using compute device: '{compute_device}'", "INFO")
 
-        # Step 2: Prepare WAV Audio File
+        # Step 2: Prepare WAV Audio File (if necessary)
+        # Generate a unique temp name based on original stem + UUID
         temp_wav_path = input_audio_path.parent / f"{input_audio_path.stem}__{uuid.uuid4().hex[:8]}_temp.wav"
-        log(f"Using temporary WAV path: {temp_wav_path}", "DEBUG")
-        if not convert_to_wav(input_audio_path, temp_wav_path):
-            raise RuntimeError("Failed to prepare WAV audio file for processing.")
-        wav_path_to_process = temp_wav_path if input_audio_path.suffix.lower() != ".wav" else input_audio_path
-        log(f"Processing audio from: {wav_path_to_process.name}", "DEBUG")
+        log(f"Potential temporary WAV path: {temp_wav_path}", "DEBUG")
 
-        # Step 3: Load AI Models
-        whisper_model, diarization_pipeline = _load_models(
-            whisper_model_size, compute_type, pyannote_pipeline_name, hf_token, compute_device
+        # Use the conversion utility - it handles if conversion is needed
+        conversion_needed, wav_path_to_process = convert_to_wav(input_audio_path, temp_wav_path)
+        if wav_path_to_process is None: # Check if conversion failed
+             raise RuntimeError(f"Failed to prepare/convert audio file: {input_audio_path.name}")
+
+        log(f"Audio ready for processing at: {wav_path_to_process.name} (Conversion performed: {conversion_needed})", "INFO")
+
+
+        # Step 3: Load AI Models using the specific loader function
+        # Pass the determined compute device
+        whisper_model, diarization_pipeline = load_models(
+            whisper_model_size=whisper_model_size,
+            compute_type=compute_type,
+            pyannote_pipeline_name=pyannote_pipeline_name, # Pass along override or None
+            hf_token=hf_token,
+            compute_device=compute_device # Pass the determined/overridden device
         )
         if not whisper_model or not diarization_pipeline:
+            # Errors logged within load_models
             raise RuntimeError("Failed to load necessary AI models.")
 
-        # Step 4: Run Transcription
-        # *** MODIFICATION 5: Pass 'word_timestamps_enabled' to the internal helper ***
-        transcript_segments = _run_transcription(
-            whisper_model,
-            wav_path_to_process,
-            language,
-            word_timestamps_enabled # <-- Pass the argument here
+        # Step 4: Run Transcription using the specific transcription function
+        transcription_output = run_transcription(
+            whisper_model=whisper_model,
+            wav_path=wav_path_to_process,
+            language=language,
+            word_timestamps_enabled=word_timestamps_enabled
         )
-        if transcript_segments is None:
+        if transcription_output is None:
             raise RuntimeError("Transcription step failed.")
+        # Unpack the results
+        transcript_segments, transcript_info = transcription_output
+        # Optionally use transcript_info downstream if needed (e.g., detected language)
 
-        # Step 5: Run Diarization
-        diarization_result = _run_diarization(diarization_pipeline, wav_path_to_process)
-        # Diarization failure (result=None) is handled within the merge step
 
-        # Step 6: Merge Results
-        final_result = _merge_results(transcript_segments, diarization_result)
+        # Step 5: Run Diarization using the specific diarization function
+        diarization_result = run_diarization(
+            diarization_pipeline=diarization_pipeline,
+            wav_path=wav_path_to_process,
+            num_speakers=num_speakers,
+            min_speakers=min_speakers,
+            max_speakers=max_speakers
+        )
+        # Diarization failure (result=None) is handled gracefully within the merge step
+
+        # Step 6: Merge Results using the specific merge function
+        final_result = merge_results(
+            whisper_segments=transcript_segments,
+            diarization_result=diarization_result
+        )
         if final_result is None:
             raise RuntimeError("Merging transcription and diarization results failed.")
 
-        log(f"Transcription and diarization process completed successfully for {input_audio_path.name}.", "SUCCESS")
+        total_time = round(time.time() - start_process_time, 2)
+        log(f"Transcription and diarization process completed successfully for {input_audio_path.name} in {total_time}s.", "SUCCESS")
 
     except Exception as e:
          # Log the overarching error encountered during the main workflow
-         log(f"Critical error during transcription/diarization for '{input_audio_path.name}': {e}", "ERROR")
-         # Detailed traceback should have been logged by the failing helper function
+         log(f"Critical error during transcription/diarization orchestration for '{input_audio_path.name}': {e}", "CRITICAL")
+         log(traceback.format_exc(), "DEBUG") # Log detailed traceback for this top-level error
          final_result = None # Ensure failure state
 
     finally:
-        # Step 7: Cleanup Temporary File (always attempt)
-        _cleanup_temp_file(temp_wav_path, input_audio_path)
+        # Step 7: Cleanup Temporary File (always attempt using the internal helper)
+        # Only pass the temp path if conversion was actually performed
+        _cleanup_temp_file(temp_wav_path if conversion_needed else None, input_audio_path)
+
+        # Optional: Explicitly clean up models to release GPU memory if needed,
+        # though Python's garbage collection usually handles this when objects go out of scope.
+        # Explicit cleanup can be useful in long-running services.
+        if whisper_model:
+             del whisper_model
+             log("Whisper model unloaded (scope exit).", "DEBUG")
+        if diarization_pipeline:
+             del diarization_pipeline
+             log("Pyannote pipeline unloaded (scope exit).", "DEBUG")
+        # Check if compute_device was defined and is cuda before clearing cache
+        if 'compute_device' in locals() and compute_device == 'cuda':
+             try:
+                 torch.cuda.empty_cache() # Requires 'import torch' at top level
+                 log("Cleared CUDA cache.", "DEBUG")
+             except NameError: # Should not happen if import torch is added
+                 log("Could not clear CUDA cache: 'torch' not imported.", "WARNING")
+             except Exception as cache_err:
+                 log(f"Could not clear CUDA cache: {cache_err}", "WARNING")
+
 
     return final_result
 
 
-# Example usage block (remains the same for testing the public function)
+# --- Example Usage Block (Adapted for Refactored Structure) ---
 if __name__ == "__main__":
-    from src.utils.log import setup_logging # Need setup for the test
+    # Imports moved inside block to avoid cluttering global scope if not running as main
+    import time
+    import json
     import logging
+    from pathlib import Path # Ensure Path is available here
+
     print("-" * 40)
-    print("--- Testing Transcriber with Diarization (Refactored & Modified) ---") # Updated print
+    print("--- Testing Transcriber Orchestrator (Refactored) ---")
     print("-" * 40)
+
+    # --- Determine Project Root (Robust way) ---
     try:
-        from src.utils.config_schema import PROJECT_ROOT
-    except ImportError:
-        PROJECT_ROOT = Path(__file__).resolve().parent.parent
+        current_path = Path(__file__).resolve()
+        project_root = current_path.parent # Start assuming src/
+        # Look for a known marker file/directory up to 3 levels up
+        for _ in range(3):
+            if (project_root / 'requirements.txt').exists() or \
+               (project_root / '.git').exists() or \
+               (project_root / 'pyproject.toml').exists():
+                break
+            project_root = project_root.parent
+        else: # If loop finished without break
+             print("⚠️ WARNING: Could not reliably determine project root. Using script parent's parent.")
+             PROJECT_ROOT = Path(__file__).resolve().parent.parent # Fallback
+        # Final check
+        if not project_root.exists():
+             PROJECT_ROOT = Path.cwd()
+             print(f"⚠️ WARNING: Determined project root '{project_root}' does not exist. Using CWD: {PROJECT_ROOT}")
+        else:
+             PROJECT_ROOT = project_root
+             print(f"Project Root detected: {PROJECT_ROOT}")
+    except NameError: # __file__ might not be defined (e.g. interactive)
+        PROJECT_ROOT = Path.cwd()
+        print(f"⚠️ WARNING: Could not use __file__, using current working directory as Project Root: {PROJECT_ROOT}")
+
+
     # --- Test Configuration ---
-    test_audio = PROJECT_ROOT / "audio" / "sample.mp3" # !! ADJUST IF YOUR SAMPLE IS ELSEWHERE !!
-    test_model = "tiny" # Use a smaller model for faster testing if needed
-    test_compute = "int8"
-    test_lang = None # Auto-detect language
-    test_hf_token = os.environ.get("HUGGING_FACE_TOKEN")
-    test_word_timestamps = True # <-- Set to True for testing the modified code
+    # Define potential locations for test audio
+    test_audio_locations = [
+        PROJECT_ROOT / "audio_samples" / "test_audio_stereo.wav",
+        PROJECT_ROOT / "audio_samples" / "test_audio_mono.mp3",
+        PROJECT_ROOT / "audio" / "sample.mp3" # Original fallback
+    ]
+    test_audio = None
+    for loc in test_audio_locations:
+        if loc.is_file():
+            test_audio = loc
+            break
+
+    test_model = "tiny"       # Faster testing model
+    test_compute = "int8"     # Efficient compute type
+    test_lang = None          # Auto-detect language
+    test_word_timestamps = True # Test with word timestamps enabled
+    test_hf_token = os.environ.get("HUGGING_FACE_TOKEN") # Use the same logic as the main function
+
     # --- Pre-Checks ---
-    if not test_audio.is_file(): print(f"❌ Test audio file not found at '{test_audio}'. Adjust path in script.")
+    if not test_audio:
+        print(f"❌ CRITICAL: Test audio file not found in expected locations:")
+        for loc in test_audio_locations: print(f"   - {loc}")
+        print("   Please adjust the 'test_audio_locations' variable or add a sample file.")
     else:
-        if not test_hf_token: print("⚠️ WARNING: HUGGING_FACE_TOKEN env var not set. Diarization might fail.")
-        # --- Setup & Run ---
-        setup_logging(level=logging.DEBUG) # Show detailed logs for testing
-        print("\n--- Running Test ---"); print(f"Input: {test_audio.name}"); print(f"Model: {test_model}/{test_compute}"); print(f"Lang: {test_lang or 'Auto'}"); print(f"Pipeline: {DEFAULT_PYANNOTE_PIPELINE}"); print(f"HF Token: {'Yes' if test_hf_token else 'No'}"); print(f"Word Timestamps: {test_word_timestamps}"); print("-" * 20) # Added Word Timestamps to output
+        print(f"Using test audio: {test_audio}")
+        # Check for Hugging Face Token (needed for default Pyannote model)
+        if not test_hf_token:
+            print("⚠️ WARNING: HUGGING_FACE_TOKEN environment variable not set.")
+            print("   Diarization using the default Pyannote model will likely fail.")
+            print("   Ensure you have accepted the model terms on Hugging Face.")
+
+        # --- Setup Logging ---
+        # Configure logging level (e.g., DEBUG for detailed output, INFO for standard)
+        setup_logging(level=logging.DEBUG)
+
+        # --- Run Test ---
+        print("\n--- Running Test ---")
+        print(f"Input: {test_audio.name}")
+        print(f"Model: {test_model}/{test_compute}")
+        print(f"Lang: {test_lang or 'Auto'}")
+        print(f"Word Timestamps: {test_word_timestamps}")
+        print(f"HF Token Provided: {'Yes' if test_hf_token else 'No'}")
+        print("-" * 20)
+
         start_run_time = time.time()
-        # Pass the test_word_timestamps variable
         results = transcribe_and_diarize(
             input_audio_path=test_audio,
             whisper_model_size=test_model,
             compute_type=test_compute,
             language=test_lang,
-            hf_token=test_hf_token,
-            word_timestamps_enabled=test_word_timestamps # <-- Pass the test setting
+            hf_token=test_hf_token, # Pass token found via os.environ
+            word_timestamps_enabled=test_word_timestamps
+            # Add diarization hints here if needed for testing:
+            # num_speakers=2
         )
-        end_run_time = time.time(); print("-" * 20); print(f"Processing finished in {end_run_time - start_run_time:.2f} seconds.")
+        end_run_time = time.time()
+        print("-" * 20)
+        print(f"Processing finished in {end_run_time - start_run_time:.2f} seconds.")
+
         # --- Display & Save Results ---
         if results:
-            print("\n--- Results (First 5 Segments with Word Data if generated) ---") # Updated print
+            print("\n--- Results (First 5 Segments with Word Data if generated) ---")
             for i, seg in enumerate(results[:5]):
-                start_ts = f"[{int(seg['start'] // 60):02d}:{int(seg['start'] % 60):02d}]"
-                end_ts = f"[{int(seg['end'] // 60):02d}:{int(seg['end'] % 60):02d}]"
-                print(f"{start_ts}-{end_ts} {seg['speaker']}: {seg['text']}")
-                # Print word data if available
-                if seg.get('words'):
-                     word_preview = " ".join([f"{w['word']}({w['start']:.1f}-{w['end']:.1f})" for w in seg['words'][:10]]) # Show first 10 words with times
-                     print(f"    Words: {word_preview}{'...' if len(seg['words']) > 10 else ''}")
+                # Basic timestamp formatting
+                start_min, start_sec = divmod(int(seg.get('start', 0)), 60)
+                end_min, end_sec = divmod(int(seg.get('end', 0)), 60)
+                start_ts = f"{start_min:02d}:{start_sec:02d}"
+                end_ts = f"{end_min:02d}:{end_sec:02d}"
+                print(f"[{start_ts}-{end_ts}] {seg.get('speaker', 'N/A')}: {seg.get('text', '')}")
+
+                # Print word data if available and not empty
+                words_data = seg.get('words', [])
+                if words_data:
+                     # Format: word(start-end)
+                     word_preview = " ".join([
+                         f"{w.get('word', '?')}({w.get('start', 0):.1f}-{w.get('end', 0):.1f})"
+                         for w in words_data[:10] # Limit preview length
+                     ])
+                     print(f"    Words: {word_preview}{'...' if len(words_data) > 10 else ''}")
+
             if len(results) > 5: print("...")
             print(f"\nTotal segments generated: {len(results)}")
+
+            # --- Save results to JSON ---
             try:
-                output_json_path = PROJECT_ROOT / "transcriber_test_output_modified.json" # Updated filename
+                # Save in project root or a dedicated 'results' directory
+                output_dir = PROJECT_ROOT / "test_results"
+                output_dir.mkdir(exist_ok=True)
+                # Include model name in output filename for clarity
+                output_json_path = output_dir / f"{test_audio.stem}_transcript_{test_model}_refactored.json"
+
                 with open(output_json_path, "w", encoding='utf-8') as f:
                     json.dump(results, f, indent=2, ensure_ascii=False)
                 print(f"\n✅ Results successfully saved to: {output_json_path}")
             except Exception as e:
+                log(f"Error saving results to JSON: {e}", "ERROR")
+                # Log traceback for saving error as well
+                log(traceback.format_exc(), "DEBUG")
                 print(f"\n❌ Error saving results to JSON: {e}")
-        else: print("\n--- Processing failed. Check logs above for errors. ---")
-    print("-" * 40); print("--- Testing Complete ---"); print("-" * 40)
+        else:
+            print("\n--- Processing failed. Check logs above for errors. ---")
+
+    print("-" * 40)
+    print("--- Testing Complete ---")
+    print("-" * 40)

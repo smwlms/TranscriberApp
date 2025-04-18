@@ -1,3 +1,12 @@
+// --- ReviewDialog.svelte ---
+// This component is responsible for displaying the review dialog for speaker name assignment.
+// It includes an audio player, transcript display, and context snippets for each speaker.
+// It allows the user to assign names to speakers and submit the review data.
+// It also handles the highlighting of words in the transcript as the audio plays.
+// It uses the Svelte framework and Tailwind CSS for styling.
+// It is designed to be responsive and accessible, with appropriate ARIA attributes.
+// It also includes error handling and loading states to improve user experience.
+
 <script>
     import { onMount, createEventDispatcher, onDestroy } from 'svelte';
     import { apiBaseUrl } from '../stores.js';

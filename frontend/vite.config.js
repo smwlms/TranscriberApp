@@ -13,19 +13,19 @@ export default defineConfig({
     proxy: {
       // Proxy API requests starting with /api/v1
       '/api/v1': {
-        target: 'http://localhost:5001', // Your Flask backend address
+        target: 'http://localhost:5000', // Your Flask backend address
         changeOrigin: true, // Needed for virtual hosted sites
         secure: false,      // Allow proxying to http target
       },
       // *** ADDED: Proxy static audio file requests ***
       '/audio': {
-        target: 'http://localhost:5001', // Point to Flask backend
+        target: 'http://localhost:5000', // Point to Flask backend
         changeOrigin: true,
         secure: false,
       },
       // *** ADDED: Proxy static result file requests ***
       '/results': {
-        target: 'http://localhost:5001', // Point to Flask backend
+        target: 'http://localhost:5000', // Point to Flask backend
         changeOrigin: true,
         secure: false,
       }
