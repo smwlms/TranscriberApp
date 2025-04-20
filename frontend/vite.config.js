@@ -1,4 +1,3 @@
-// File: vite.config.js
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 
@@ -6,12 +5,22 @@ export default defineConfig({
   plugins: [svelte()],
   server: {
     proxy: {
-      // forward /api/v1 to your Flask backend
-      '/api': {
-        target: 'http://localhost:5000',
+      // stuur al je API‐calls door naar je Flask backend
+      '/api/v1': {
+        target: 'http://127.0.0.1:5000',
         changeOrigin: true,
-        rewrite: path => path.replace(/^\/api/, '/api'),
+        secure: false
       },
-    },
-  },
+      '/audio': {
+        target: 'http://127.0.0.1:5000',
+        changeOrigin: true,
+        secure: false
+      },
+      '/results': {
+        target: 'http://127.0.0.1:5000',
+        changeOrigin: true,
+        secure: false
+      }
+    }
+  }
 });

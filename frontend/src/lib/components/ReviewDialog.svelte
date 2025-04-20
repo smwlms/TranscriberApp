@@ -130,16 +130,25 @@
             class="w-full mb-4"
             src={`/${jobId}.mp3`}
           />
+  
           <section>
             <h3 class="font-semibold mb-2">Assign Names</h3>
             {#each uniqueSpeakers as id}
               <div class="flex items-center space-x-2 mb-2">
-                <label class="w-24">{id}:</label>
+                <!-- A11y‑fix: label → for/input id koppeling -->
+                <label
+                  for={"speaker-" + id}
+                  class="w-24 font-mono text-sm font-medium text-gray-200"
+                >
+                  {id}:
+                </label>
                 <input
+                  id={"speaker-" + id}
                   type="text"
                   bind:value={editedMap[id]}
                   placeholder={proposedMap[id]?.name || ''}
-                  class="flex-1 p-1 rounded bg-gray-800 text-gray-100"
+                  class="flex-1 p-1 rounded bg-gray-800 text-gray-100 focus:outline-none focus:ring"
+                  aria-label="Naam toewijzen aan {id}"
                 />
                 {#if proposedMap[id]?.reasoning_indices?.length}
                   <button on:click={() => toggleContext(id)}>Why?</button>
@@ -176,6 +185,7 @@
     </div>
   </div>
   
+  <!-- svelte-ignore css-unused-selector -->
   <style>
     .highlight {
       background-color: red;
