@@ -1,9 +1,8 @@
-import { vitePreprocess } from '@sveltejs/vite-plugin-svelte'
+// File: svelte.config.js
+import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 
+/** @type {import('vite').UserConfig} */
 export default {
-  // Consult https://svelte.dev/docs#compile-time-svelte-preprocess
-  // for more information about preprocessors
-  // vitePreprocess() integrates with Vite's pipeline,
-  // allowing things like PostCSS/Tailwind processing within <style> tags.
+  // Enables Tailwind & PostCSS processing
   preprocess: vitePreprocess(),
-}
+};

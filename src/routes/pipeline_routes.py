@@ -19,7 +19,7 @@ UPLOAD_FOLDER = PROJECT_ROOT / UPLOAD_FOLDER_NAME
 RESULTS_FOLDER_NAME = "results"
 RESULTS_FOLDER = PROJECT_ROOT / RESULTS_FOLDER_NAME
 
-pipeline_bp = Blueprint('pipeline', __name__, url_prefix='/api/v1')
+pipeline_bp = Blueprint('pipeline', __name__)
 
 @pipeline_bp.route("/start_pipeline", methods=["POST"])
 def start_pipeline_route():

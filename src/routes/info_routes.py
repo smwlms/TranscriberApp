@@ -22,7 +22,7 @@ except ImportError:
 # Define the Blueprint object
 # Make sure the prefix '/api/v1' is correct based on how it's registered in app.py
 # If app.py already adds the prefix when registering, remove it here. Assuming prefix is needed here:
-info_bp = Blueprint('info_bp', __name__, url_prefix='/api/v1')
+info_bp = Blueprint('info_bp', __name__)
 
 # --- Info Routes ---
 

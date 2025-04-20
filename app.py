@@ -1,114 +1,93 @@
-# File: app.py
 import os
 import traceback
-import time
 from pathlib import Path
 from flask import Flask, jsonify, request
+from flask_cors import CORS
 from dotenv import load_dotenv
-load_dotenv() # Load environment variables early
 
-# Setup logging and DB first
+# Laden en initialisatie
+load_dotenv()
 from src.utils.log import setup_logging, log
-setup_logging() # Configure logging based on config.yaml/defaults
+setup_logging()
+
 from src.database_logger import initialize_database
-db_initialized = initialize_database()
-if not db_initialized:
-    log("Database could not be initialized. DB logging might fail.", "CRITICAL")
+if not initialize_database():
+    log("Database kon niet worden geïnitialiseerd", "CRITICAL")
 
-# Import PROJECT_ROOT and schema parser utility
 from src.utils.config_schema import parse_schema_for_ui, PROJECT_ROOT
-# job_manager is used via blueprints, no direct import needed here
+from src.utils.load_config import load_config
 
-# --- Create Flask App Instance ---
-log("Initializing Flask application...", "INFO")
-app = Flask(__name__) # Core Flask app instance
+# --- Flask App ---
+app = Flask(__name__)
+# CORS vóór blueprint‑registratie
+CORS(app, origins=["http://localhost:5173"])
+log("CORS geconfigureerd voor http://localhost:5173", "INFO")
 
-# --- Application Configuration ---
-UPLOAD_FOLDER_NAME = "audio"
-RESULTS_FOLDER_NAME = "results"
-UPLOAD_FOLDER = PROJECT_ROOT / UPLOAD_FOLDER_NAME
-RESULTS_FOLDER = PROJECT_ROOT / RESULTS_FOLDER_NAME
+# Folders
+UPLOAD_FOLDER = PROJECT_ROOT / "audio"
+RESULTS_FOLDER = PROJECT_ROOT / "results"
+UPLOAD_FOLDER.mkdir(exist_ok=True)
+RESULTS_FOLDER.mkdir(exist_ok=True)
+app.config['UPLOAD_FOLDER'] = str(UPLOAD_FOLDER)
+app.config['RESULTS_FOLDER'] = str(RESULTS_FOLDER)
+log(f"Upload folder: {UPLOAD_FOLDER}", "INFO")
+log(f"Results folder: {RESULTS_FOLDER}", "INFO")
+
+# UI schema
 try:
-    UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
-    RESULTS_FOLDER.mkdir(parents=True, exist_ok=True)
-    app.config['UPLOAD_FOLDER'] = str(UPLOAD_FOLDER)
-    app.config['RESULTS_FOLDER'] = str(RESULTS_FOLDER)
-    log(f"Upload folder: {app.config['UPLOAD_FOLDER']}", "INFO")
-    log(f"Results folder: {app.config['RESULTS_FOLDER']}", "INFO")
+    schema = parse_schema_for_ui()
+    app.config['SCHEMA_INFO_FOR_UI'] = schema
+    log("Schema info geladen", "DEBUG")
 except Exception as e:
-     log(f"CRITICAL: Failed to create/access essential folders (upload/results): {e}", "CRITICAL")
+    log(f"Fout bij laden UI schema: {e}", "CRITICAL")
+    app.config['SCHEMA_INFO_FOR_UI'] = {}
 
-# --- Load and Store Schema Info in App Config ---
-try:
-    log("Loading UI schema info...", "INFO")
-    schema_info = parse_schema_for_ui()
-    if not schema_info: log("Schema info could not be loaded/parsed.", "ERROR")
-    app.config['SCHEMA_INFO_FOR_UI'] = schema_info
-    log("Schema info loaded into app config.", "DEBUG")
-except Exception as e:
-     log(f"CRITICAL: Failed to load schema info at startup: {e}", "CRITICAL")
-     app.config['SCHEMA_INFO_FOR_UI'] = {}
-
-
-# --- Import and Register Blueprints ---
-log("Registering API blueprints...", "INFO")
+# Blueprints
 from src.routes.pipeline_routes import pipeline_bp
 from src.routes.review_routes import review_bp
-# *** MODIFICATION: Import the renamed/split blueprints ***
-from src.routes.file_routes import file_api_bp # Contains only /upload_audio API
-from src.routes.static_routes import static_files_bp # Contains /audio/ and /results/ static routes
+from src.routes.file_routes import file_api_bp
+from src.routes.static_routes import static_files_bp
 from src.routes.info_routes import info_bp
 
 API_PREFIX = "/api/v1"
-
-# --- Blueprint Registration (Corrected based on split) ---
-# Register API routes WITH prefix
 app.register_blueprint(pipeline_bp, url_prefix=API_PREFIX)
 app.register_blueprint(review_bp, url_prefix=API_PREFIX)
-app.register_blueprint(file_api_bp, url_prefix=API_PREFIX) # Register API part with prefix
+app.register_blueprint(file_api_bp, url_prefix=API_PREFIX)
 app.register_blueprint(info_bp, url_prefix=API_PREFIX)
+# Static serve zonder prefix
+app.register_blueprint(static_files_bp)
+log(f"Registered API blueprints met prefix {API_PREFIX} en static routes.", "INFO")
 
-# Register static file serving routes WITHOUT prefix
-app.register_blueprint(static_files_bp) # Register static part without prefix
-# ------------------------------------
-# Log message reflects the intended structure
-log(f"Registered API blueprints with prefix: {API_PREFIX}. Registered static file serving blueprint.", "INFO")
-
-
-# --- Basic Error Handling & Root Endpoint ---
+# Health check
 @app.route("/")
 def health_check():
-     """Basic health check endpoint."""
-     log("Health check endpoint '/' accessed.", "DEBUG")
-     return jsonify({"status": "ok", "message": "Transcriber API is running."})
+    log("Health check '/' accessed.", "DEBUG")
+    return jsonify({"status": "ok", "message": "Transcriber API is running."})
 
-# --- Error Handlers --- (Remain unchanged)
-@app.errorhandler(500)
-def handle_internal_error(error):
-    log(f"Internal Server Error (500): {error}", "ERROR"); log(traceback.format_exc(), "ERROR")
-    return jsonify(error="Internal Server Error", message="An unexpected error occurred."), 500
+# Fouthandlers
 @app.errorhandler(404)
-def handle_not_found_error(error):
-    log(f"Not Found Error (404): Path '{request.path}'. Description: {getattr(error, 'description', 'N/A')}", "WARNING")
-    return jsonify(error="Not Found", message="The requested API endpoint or resource was not found."), 404
+def not_found(e):
+    log(f"404 op {request.path}", "WARNING")
+    return jsonify(error="Not Found", message=str(e)), 404
+
+@app.errorhandler(500)
+def internal_error(e):
+    log(f"500: {e}", "ERROR")
+    log(traceback.format_exc(), "ERROR")
+    return jsonify(error="Internal Server Error"), 500
+
 @app.errorhandler(405)
-def handle_method_not_allowed(error):
-    log(f"Method Not Allowed (405): Method '{request.method}' not allowed for path '{request.path}'.", "WARNING")
-    response = jsonify(error="Method Not Allowed", message="The method specified is not allowed for the requested URL.")
-    if hasattr(error, 'valid_methods') and isinstance(error.valid_methods, (list, tuple)): response.headers['Allow'] = ', '.join(error.valid_methods)
-    return response, 405
+def method_not_allowed(e):
+    log(f"405: {e}", "WARNING")
+    return jsonify(error="Method Not Allowed"), 405, {'Allow': ','.join(e.valid_methods or [])}
+
 @app.errorhandler(415)
-def handle_unsupported_media_type(error):
-    log(f"Unsupported Media Type (415): Request for '{request.path}' had unsupported Content-Type '{request.mimetype}'.", "WARNING")
-    return jsonify(error="Unsupported Media Type", message="The request content type is not supported by this endpoint."), 415
+def unsupported_media_type(e):
+    log(f"415: {e}", "WARNING")
+    return jsonify(error="Unsupported Media Type"), 415
 
-# --- Main Execution Guard --- (Remains unchanged)
 if __name__ == "__main__":
-    log("Starting Flask development server directly...", "INFO")
-    host = os.environ.get("FLASK_HOST", "0.0.0.0")
-    port = int(os.environ.get("FLASK_PORT", 5001))
-    debug_mode = os.environ.get("FLASK_DEBUG", "true").lower() in ['true', '1', 'yes']
-    log(f"Running Flask app on http://{host}:{port}/ (Debug mode: {debug_mode})", "INFO")
-    app.run(host=host, port=port, debug=debug_mode)
-
-# --- End of app.py ---
+    host = os.getenv("FLASK_HOST", "127.0.0.1")
+    port = int(os.getenv("FLASK_PORT", 5000))
+    debug = os.getenv("FLASK_DEBUG", "false").lower() in ["1","true"]
+    app.run(host=host, port=port, debug=debug)
