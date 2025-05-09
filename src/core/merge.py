@@ -1,4 +1,4 @@
-# File: src/core/merge.py
+# File: src/core/merge.py (Corrected is_empty check)
 
 import traceback
 from typing import List, Dict, Optional, Any
@@ -40,6 +40,16 @@ def merge_results(
     final_merged_segments: List[Dict[str, Any]] = []
     log("Merging transcription and diarization results...", "INFO")
 
+    # Handle empty whisper segments input
+    if not whisper_segments:
+        log("No whisper segments provided for merging.", "WARNING")
+        # If diarization result exists but no whisper segments, still return empty list
+        return [] if diarization_result else None # Return None only if both are missing? Or always empty list if segments are empty?
+        # Returning empty list if whisper segments are empty seems more consistent.
+        # Let's return an empty list here if whisper_segments is empty, regardless of diarization.
+        return []
+
+
     # --- Handle case where diarization failed or is missing ---
     if not diarization_result:
         log("Diarization result is missing or empty. Assigning 'SPEAKER_UNKNOWN' to all segments.", "WARNING")
@@ -79,23 +89,29 @@ def merge_results(
             segment_end = getattr(segment_info, 'end', 0.0)
             segment_text = getattr(segment_info, 'text', '').strip()
 
-            # Skip empty segments from Whisper if they occur
-            if not segment_text:
-                log(f"Skipping empty Whisper segment {i+1} [{segment_start:.2f}-{segment_end:.2f}].", "DEBUG")
-                continue
+            # Skip empty segments from Whisper if they occur (should be rare but defensive)
+            if not segment_text and (segment_end - segment_start) < 0.01: # Skip if text is empty and duration is very short
+                log(f"Skipping near-empty Whisper segment {i+1} [{segment_start:.2f}-{segment_end:.2f}].", "DEBUG")
+                continue # Skip to next segment
+
 
             # Create a Pyannote Segment object representing the Whisper segment's time span
-            whisper_segment_time = PyannoteSegment(segment_start, segment_end)
+            # Use segment_end if it's slightly less than start (can happen due to rounding)
+            adjusted_segment_end = max(segment_start + 0.001, segment_end) # Ensure end is >= start + small delta for valid Pyannote Segment
+            whisper_segment_time = PyannoteSegment(segment_start, adjusted_segment_end)
+
 
             # Use 'SPEAKER_?' as initial default, change based on findings
-            speaker_label = "SPEAKER_MERGE_FAILED"
+            speaker_label = "SPEAKER_MERGE_FAILED" # Default if merge logic fails
 
             try:
                 # --- Find overlapping speaker turns ---
                 # Get speaker turns from the annotation that overlap with the whisper segment time
+                # diarization_result is the Pyannote Annotation object
                 overlapping_turns = diarization_result.crop(whisper_segment_time, mode='intersection')
 
-                if not overlapping_turns or overlapping_turns.is_empty():
+                # GECORRIGEERDE CHECK: Gebruik len() om te controleren of de Annotation leeg is
+                if not overlapping_turns or len(overlapping_turns) == 0: # <-- GECORRIGEERDE REGEL
                     # If no speaker turn overlaps significantly, label as Unknown
                     speaker_label = "SPEAKER_UNKNOWN"
                     log(f"Segment {i+1}/{segment_count} [{segment_start:.2f}-{segment_end:.2f}]: No overlapping speaker turn found by Pyannote.", "DEBUG")
@@ -105,7 +121,7 @@ def merge_results(
                     # `argmax()` returns the label associated with the longest duration segment/track
                     # within the provided annotation (which is already cropped).
                     dominant_speaker = overlapping_turns.argmax()
-                    speaker_label = dominant_speaker
+                    speaker_label = dominant_speaker # This is the speaker ID string
                     log(f"Segment {i+1}/{segment_count} [{segment_start:.2f}-{segment_end:.2f}] -> Assigned Speaker '{speaker_label}'.", "DEBUG")
 
             except Exception as merge_err:
@@ -118,7 +134,7 @@ def merge_results(
                 "text": segment_text,
                 "start": segment_start,
                 "end": segment_end,
-                "speaker": speaker_label
+                "speaker": speaker_label # Store the assigned speaker ID
             }
 
             # --- Add word data if available ---
@@ -127,21 +143,25 @@ def merge_results(
             if hasattr(segment_info, 'words') and segment_info.words:
                 # Format the word data into the structure expected by the frontend/downstream
                 words_list = [
+                    # Ensure basic structure of word object before accessing attributes
                     {"word": word.word.strip(), "start": word.start, "end": word.end, "score": getattr(word, 'probability', 0.0)}
-                    for word in segment_info.words if word.word is not None # Basic sanity check
+                    # Add checks here if needed: if word and isinstance(word, object) and hasattr(word, 'word') ...
+                    for word in segment_info.words if word is not None # Basic sanity check for null words
                 ]
             # If no words attribute or it's empty, words_list remains empty []
-            segment_data["words"] = words_list
+            segment_data["words"] = words_list # Add the list of word dictionaries
             # ------------------------------------
 
             # Append the structured segment information to the final list
             final_merged_segments.append(segment_data)
 
         log(f"Merge of {len(final_merged_segments)} segments completed successfully.", "SUCCESS")
-        return final_merged_segments
+        return final_merged_segments # Return the list of dictionaries
 
     except Exception as e:
         # Catch unexpected errors during the overall merging loop
         log(f"Merging results failed overall: {e}", "ERROR")
         log(traceback.format_exc(), "DEBUG")
         return None # Return None if the merge process fails critically
+
+# --- End of src/core/merge.py ---

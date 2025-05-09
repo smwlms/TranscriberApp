@@ -1,4 +1,4 @@
-# File: src/routes/static_routes.py
+# src/routes/static_routes.py (Met Favicon Route)
 
 import traceback
 from pathlib import Path
@@ -12,85 +12,112 @@ from src.utils.config_schema import PROJECT_ROOT
 # Import secure_filename for sanitizing input
 from werkzeug.utils import secure_filename
 
-# --- Define Paths Used by this Blueprint ---
-UPLOAD_FOLDER_NAME = "audio"
+# --- Import Constants ---
+# BELANGRIJK: Zorg ervoor dat deze constanten gedefinieerd zijn in src/constants.py
+try:
+    # GECORRIGEERDE IMPORT: Voeg STATIC_FOLDER_NAME toe
+    from src.constants import UPLOAD_FOLDER_NAME, RESULTS_FOLDER_NAME, STATIC_FOLDER_NAME
+except ImportError:
+    # Fallback/Error if constants are not defined. Should ideally be caught by config/setup.
+    log("CRITICAL: Could not import folder names from src.constants. Static file serving may fail.", "CRITICAL")
+    UPLOAD_FOLDER_NAME = "audio" # Fallback to default name
+    RESULTS_FOLDER_NAME = "results" # Fallback to default name
+    STATIC_FOLDER_NAME = "static" # Fallback to default name
+
+
+# --- Define Base Directories ---
+# Use constants for directory names
 UPLOAD_FOLDER = PROJECT_ROOT / UPLOAD_FOLDER_NAME
-RESULTS_FOLDER_NAME = "results"
 RESULTS_FOLDER = PROJECT_ROOT / RESULTS_FOLDER_NAME
+STATIC_FOLDER = PROJECT_ROOT / STATIC_FOLDER_NAME # <-- Definieer STATIC_FOLDER
+
 
 # --- Define the Blueprint for Static Files ---
+# Use the name expected by app.py registration
 static_files_bp = Blueprint(
-    'static_files', # Use the name expected by app.py
+    'static_files',
     __name__,
-    # NO url_prefix here, registration in app.py handles root paths
+    # NO url_prefix here, registration in app.py handles root paths like /results/ and /audio/
 )
 
-# --- Static File Serving Routes ---
+# --- Helper Function for Secure File Serving (already exists) ---
+def _safe_send_from_project_subdir(directory_name: str, filename: str, as_attachment: bool = False):
+    """
+    Safely serves a file from a specified subdirectory within the PROJECT_ROOT.
+    Prevents directory traversal attacks.
+    """
+    # ... (existing implementation of _safe_send_from_project_subdir)
+    safe_basename = Path(secure_filename(filename)).name
+    if not safe_basename or safe_basename != filename:
+         log(f"Static Route Warning: File request blocked for potentially unsafe filename. Original='{filename}', Sanitized='{safe_basename}'", "WARNING")
+         abort(400, description="Invalid filename provided.")
 
-@static_files_bp.route("/results/<path:filename>")
+    base_directory = PROJECT_ROOT / directory_name
+    resolved_base_directory = base_directory.resolve()
+
+    try:
+        log(f"Static Route: Attempting to send file '{safe_basename}' from directory '{resolved_base_directory}' (as_attachment={as_attachment})", "DEBUG")
+        return send_from_directory(
+                directory=str(resolved_base_directory),
+                path=safe_basename,
+                as_attachment=as_attachment
+            )
+    except FileNotFoundError:
+        log(f"Static Route Error: File not found: '{safe_basename}' in '{resolved_base_directory}'", "ERROR")
+        abort(404, description="File not found.")
+    except Exception as e:
+        log(f"Static Route Error: Server error serving file '{safe_basename}' from '{resolved_base_directory}': {e}", "ERROR")
+        log(traceback.format_exc(), "DEBUG")
+        abort(500, description="Server error during file serving.")
+
+
+# --- Static File Serving Routes ---
+# These routes call the helper function
+
+@static_files_bp.route(f"/{RESULTS_FOLDER_NAME}/<path:filename>")
 def download_result_file(filename):
     """
-    Endpoint to allow downloading of result files stored in the RESULTS_FOLDER.
-    Uses Flask's send_from_directory for secure file serving.
-    (Registered without prefix in app.py)
+    Endpoint to allow downloading of result files.
+    Serves files from the configured RESULTS_FOLDER.
+    Forces download.
     """
     log(f"Static Route: Request to download result file: {filename}", "INFO")
-
-    # --- Sanitize Filename ---
-    safe_basename = Path(secure_filename(filename)).name
-    if not safe_basename or safe_basename != filename:
-         log(f"Static Route Warning: Download request blocked for potentially unsafe filename. Original='{filename}', Sanitized='{safe_basename}'", "WARNING")
-         abort(400, description="Invalid filename provided.")
-
-    # --- Serve File ---
-    try:
-        log(f"Static Route: Attempting to send file from directory '{RESULTS_FOLDER}' with safe path '{safe_basename}'", "DEBUG")
-        return send_from_directory(
-                directory=str(RESULTS_FOLDER.resolve()), # Use absolute path string
-                path=safe_basename,
-                as_attachment=True # Force download
-            )
-    except FileNotFoundError:
-        log(f"Static Route Error: Download failed - result file not found: {safe_basename} in {RESULTS_FOLDER}", "ERROR")
-        abort(404, description="Result file not found.")
-    except Exception as e:
-        log(f"Static Route Error: Server error during result file download ('{safe_basename}'): {e}", "ERROR")
-        log(traceback.format_exc(), "DEBUG")
-        abort(500, description="Server error during file download.")
+    return _safe_send_from_project_subdir(RESULTS_FOLDER_NAME, filename, as_attachment=True)
 
 
-@static_files_bp.route("/audio/<path:filename>")
+@static_files_bp.route(f"/{UPLOAD_FOLDER_NAME}/<path:filename>")
 def serve_audio_file(filename):
     """
-    Endpoint to allow accessing original uploaded audio files
-    stored in the UPLOAD_FOLDER. Uses Flask's send_from_directory.
-    Needed for the <audio> tag source in the ReviewDialog.
-    (Registered without prefix in app.py)
+    Endpoint to allow accessing original uploaded audio files.
+    Serves files from the configured UPLOAD_FOLDER.
+    Allows browser to play/handle inline by default.
     """
-    # *** ADDED DEBUG LOG TO CONFIRM ROUTE IS HIT ***
-    log("!!!!!!!!!!!! SERVING AUDIO FILE ROUTE HIT !!!!!!!!!!!!", "CRITICAL")
     log(f"Static Route: Request to serve audio file: {filename}", "INFO")
+    return _safe_send_from_project_subdir(UPLOAD_FOLDER_NAME, filename, as_attachment=False)
 
-    # --- Sanitize Filename (IMPORTANT!) ---
-    safe_basename = Path(secure_filename(filename)).name
-    if not safe_basename or safe_basename != filename:
-         log(f"Static Route Warning: Audio file request blocked for potentially unsafe filename. Original='{filename}', Sanitized='{safe_basename}'", "WARNING")
-         abort(400, description="Invalid filename provided.")
 
-    # --- Serve File using send_from_directory ---
+# --- NEW Route for Favicon ---
+@static_files_bp.route('/favicon.ico')
+def serve_favicon():
+    """
+    Endpoint to serve the favicon.ico file from the static directory.
+    Browsers automatically request this from the root.
+    """
+    log("Static Route: Request for favicon.ico", "DEBUG")
     try:
-        log(f"Static Route: Attempting to send audio file from directory '{UPLOAD_FOLDER}' with safe path '{safe_basename}'", "DEBUG")
+        # Serve the favicon.ico file directly from the STATIC_FOLDER
+        # No need for sanitization as the filename is hardcoded
         return send_from_directory(
-                directory=str(UPLOAD_FOLDER.resolve()), # Use absolute path string
-                path=safe_basename,
-                # Default: as_attachment=False - allows browser to play/handle inline
-            )
+            directory=str(STATIC_FOLDER.resolve()), # Use absolute path string
+            path='favicon.ico',                   # Hardcoded filename
+            mimetype='image/vnd.microsoft.icon'   # Specify MIME type
+        )
     except FileNotFoundError:
-        log(f"Static Route Error: Serve audio failed - file not found: {safe_basename} in {UPLOAD_FOLDER}", "ERROR")
-        abort(404, description="Audio file not found.")
+        log("Static Route Warning: Favicon.ico not found in static directory.", "WARNING")
+        abort(404) # Return 404 if favicon is not found
     except Exception as e:
-        log(f"Static Route Error: Server error serving audio file ('{safe_basename}'): {e}", "ERROR")
+        log(f"Static Route Error: Server error serving favicon.ico: {e}", "ERROR")
         log(traceback.format_exc(), "DEBUG")
-        abort(500, description="Server error serving audio file.")
+        abort(500)
 
 # --- End of src/routes/static_routes.py ---
