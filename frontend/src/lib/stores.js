@@ -1,39 +1,22 @@
-// src/stores.js
+// frontend/src/lib/stores.js
 
-import { writable, readable, derived } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
 
-// --- Check if running in a browser environment ---
+// --- 1. Browser-check & Logging Helpers -------------------------
 const browser = typeof window !== 'undefined';
+const logStore = (...args)   => browser && console.debug('[Store]', ...args);
+const logTheme = (...args)   => browser && console.debug('[Theme]', ...args);
 
-// --- Logging Helpers (Browser Only) ---
-function log_store(...args) { if (browser) console.log('[Store]', ...args); }
-function log_theme(...args) { if (browser) console.log('[ThemeStore]', ...args); }
-
-// --- Application Stores ---
-
+// --- 2. Config Info (ongewijzigd) ------------------------------
 export const configInfo = writable({
   schema: {},
   available_models: [],
   detected_device: null
 });
 
-export const currentJob = writable({
-  job_id: null,
-  status: null,
-  progress: 0,
-  logs: [],
-  result: null,
-  error_message: null,
-  stop_requested: false,
-  relative_audio_path: null
-});
-
-export const jobConfigOverrides = writable({});
-export const configLoaded = writable(false);
-export const apiBaseUrl = writable('http://127.0.0.1:5000/api/v1');
-
-export function resetCurrentJob() {
-  currentJob.set({
+// --- 3. Job-Store met patch/reset -------------------------------
+function createJobStore() {
+  const initial = {
     job_id: null,
     status: null,
     progress: 0,
@@ -42,99 +25,109 @@ export function resetCurrentJob() {
     error_message: null,
     stop_requested: false,
     relative_audio_path: null
-  });
-  log_store('Current job state reset.');
+  };
+  const { subscribe, set, update } = writable(initial);
+
+  return {
+    subscribe,
+    // Voegt alleen de gewijzigde velden toe, behoudt de rest
+    patch: partial => update(j => {
+      const patched = { ...j, ...partial };
+      logStore('currentJob.patch →', patched);
+      return patched;
+    }),
+    // Zet alles terug naar de initiële staat
+    reset: () => {
+      logStore('currentJob.reset');
+      set(initial);
+    }
+  };
 }
+export const currentJob = createJobStore();
 
-// --- THEME MANAGEMENT STORE ---
+// --- 4. Overige eenvoudige stores -------------------------------
+export const jobConfigOverrides = writable({});
+export const configLoaded        = writable(false);
+export const apiBaseUrl          = writable('http://127.0.0.1:5000/api/v1');
 
-function applyThemeClass(themePreferenceValue) {
+// --- 5. Theme-management (light / dark / system) ---------------
+function applyThemeClass(pref) {
   if (!browser) return;
   const root = document.documentElement;
-  let themeToApply = 'light';
+  let toApply = 'light';
 
-  if (themePreferenceValue === 'dark') {
-    themeToApply = 'dark';
-  } else if (themePreferenceValue === 'system') {
-    themeToApply = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  if (pref === 'dark') {
+    toApply = 'dark';
+  } else if (pref === 'system') {
+    toApply = window.matchMedia('(prefers-color-scheme: dark)').matches
+      ? 'dark'
+      : 'light';
   }
 
-  if (!root.classList.contains(themeToApply)) {
+  if (!root.classList.contains(toApply)) {
     root.classList.remove('light', 'dark');
-    root.classList.add(themeToApply);
-    log_theme('Applied theme class to <html>:', themeToApply);
+    root.classList.add(toApply);
+    logTheme('Applied theme →', toApply);
   } else {
-    log_theme('Theme class already set to:', themeToApply);
+    logTheme('Theme already →', toApply);
   }
 }
 
-let initialUserThemePreference = 'system';
+// Bepaal initiële voorkeur (localStorage of system)
+const stored = browser ? localStorage.getItem('theme') : null;
+const initialTheme = (stored && ['light','dark','system'].includes(stored))
+  ? stored
+  : 'system';
+
+export const themePreference = writable(initialTheme);
+
+// Bij load & bij elke wijziging: sla op + pas class toe
 if (browser) {
-  try {
-    const storedTheme = localStorage.getItem('theme');
-    if (storedTheme && ['light', 'dark', 'system'].includes(storedTheme)) {
-      initialUserThemePreference = storedTheme;
-    } else {
-      localStorage.setItem('theme', 'system');
-    }
-  } catch (e) {
-    console.error("Error accessing localStorage for theme, defaulting to 'system'.", e);
-    initialUserThemePreference = 'system';
-  }
-}
-
-export const themePreference = writable(initialUserThemePreference);
-
-if (browser) {
-  applyThemeClass(initialUserThemePreference);
-
+  applyThemeClass(initialTheme);
   themePreference.subscribe(value => {
-    if (['light', 'dark', 'system'].includes(value)) {
-      try {
-        localStorage.setItem('theme', value);
-      } catch (e) {
-        console.error("Error saving theme preference to localStorage:", e);
-      }
-      applyThemeClass(value);
-    } else {
-      log_theme(`Invalid theme preference value: ${value}. Resetting to 'system'.`);
-      themePreference.set('system');
+    if (!['light','dark','system'].includes(value)) {
+      logTheme('Ongeldige theme:', value, 'Reset naar system');
+      value = 'system';
+      themePreference.set(value);
     }
+    try { localStorage.setItem('theme', value); }
+    catch (e) { console.error('Kon theme niet opslaan:', e); }
+    applyThemeClass(value);
   });
 
-  const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-  const systemThemeListener = (event) => {
-    let currentPreference;
-    const unsubscribe = themePreference.subscribe(v => { currentPreference = v; });
-    unsubscribe();
-    if (currentPreference === 'system') {
-      log_theme('System color scheme changed by OS, reapplying theme class.');
+  // Als system-pref verandert, opnieuw toepassen (indien mode=system)
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  const onSysChange = () => {
+    if (get(themePreference) === 'system') {
+      logTheme('System preference gewijzigd, opnieuw toepassen');
       applyThemeClass('system');
     }
   };
-  mediaQuery.addEventListener('change', systemThemeListener);
+  mq.addEventListener('change', onSysChange);
 }
 
-// Derived store for the actually applied theme
+// Derived store die écht toegepaste theme bijhoudt
 export const appliedTheme = derived(
   themePreference,
-  ($preference, set) => {
+  ($pref, set) => {
     if (!browser) { set('light'); return; }
-    const updateApplied = () => {
-      const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      const actualTheme = $preference === 'system'
-        ? (systemPrefersDark ? 'dark' : 'light')
-        : $preference;
-      set(actualTheme);
-      log_theme('Applied theme derived store updated:', actualTheme);
+
+    const update = () => {
+      const sysDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const actual = $pref === 'system'
+        ? (sysDark ? 'dark' : 'light')
+        : $pref;
+      set(actual);
+      logTheme('Derived theme →', actual);
     };
-    updateApplied();
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    mediaQuery.addEventListener('change', updateApplied);
-    return () => mediaQuery.removeEventListener('change', updateApplied);
+
+    update();
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    mq.addEventListener('change', update);
+    return () => mq.removeEventListener('change', update);
   },
   'light'
 );
 
-// --- PRESET STORE ---
+// --- 6. Preset Store (ongewijzigd) ------------------------------
 export const selectedPreset = writable('standard');

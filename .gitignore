@@ -45,3 +45,4 @@ Thumbs.db # Windows
 .idea/
 *.swp
 
+.DS_Store
