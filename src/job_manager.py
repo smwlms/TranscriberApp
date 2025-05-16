@@ -1,4 +1,7 @@
 # src/job_manager.py
+# Begin van src/job_manager.py
+print("<<<<< LOADING src/job_manager.py - VERSION CHECK (DATUM/TIJD OF VERSIENUMMER) >>>>>")
+
 
 import uuid
 import time
