@@ -1,0 +1,109 @@
+.
+├── app.py
+├── assets
+│   ├── dashboard_V1_dark_mode.png
+│   └── Dashboard_V1.png
+├── audio
+│   ├── accurat.m4a
+│   ├── call_inbound_2706952398.mp3
+│   ├── call_outbound_2658986934.mp3
+│   ├── call_outbound_2706705040__91908066_temp.wav
+│   ├── call_outbound_2706705040.mp3
+│   ├── call_outbound_2717637293.mp3
+│   ├── call_outbound_2799902358.mp3
+│   ├── input_1744052579.mp3
+│   ├── input.m4a
+│   ├── input.mp3
+│   ├── Interview_Realo_vastgoedgids_2022.m4a
+│   ├── New_Recording_10.m4a
+│   ├── New_Recording_11.m4a
+│   └── sample.mp3
+├── config_schema.yaml
+├── config.yaml
+├── frontend
+│   ├── index.html
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── postcss.config.cjs
+│   ├── project-structuur.txt
+│   ├── src
+│   │   ├── App.svelte
+│   │   ├── index.css
+│   │   ├── lib
+│   │   └── main.js
+│   ├── svelte.config.js
+│   ├── tailwind.config.js
+│   └── vite.config.js
+├── LICENSE
+├── llm_training_data.db
+├── logs
+│   ├── app.log
+│   ├── app.log.2025-04-18
+│   └── app.log.2025-04-19
+├── Makefile
+├── package-lock.json
+├── package.json
+├── project-structuur.txt
+├── README.md
+├── requirements.txt
+├── results
+│   ├── advanced_analysis.json
+│   ├── summary.txt
+│   └── transcript.html
+├── run_analysis.sh
+├── speaker_map.yaml
+├── src
+│   ├── __init__.py
+│   ├── __main__.py
+│   ├── analysis_tasks
+│   │   ├── __init__.py
+│   │   └── advanced_tasks.py
+│   ├── constants.py
+│   ├── core
+│   │   ├── __init__.py
+│   │   ├── merge.py
+│   │   ├── model_loader.py
+│   │   ├── pyannote_diarize.py
+│   │   └── whisper_transcribe.py
+│   ├── database_logger.py
+│   ├── job_manager.py
+│   ├── logs
+│   │   ├── app.log
+│   │   ├── app.log.2025-05-09
+│   │   ├── app.log.2025-05-10
+│   │   ├── app.log.2025-05-11
+│   │   ├── app.log.2025-05-12
+│   │   ├── app.log.2025-05-13
+│   │   ├── app.log.2025-05-14
+│   │   └── app.log.2025-05-15
+│   ├── pipeline_cli.py
+│   ├── pipeline_part1.py
+│   ├── pipeline_part2.py
+│   ├── routes
+│   │   ├── __init__.py
+│   │   ├── file_routes.py
+│   │   ├── info_routes.py
+│   │   ├── pipeline_routes.py
+│   │   ├── review_routes.py
+│   │   └── static_routes.py
+│   ├── speaker_mapping.py
+│   ├── speaker_name_detector.py
+│   ├── transcriber.py
+│   ├── transcript_reformatter.py
+│   └── utils
+│       ├── __init__.py
+│       ├── audio_utils.py
+│       ├── auto_update_config.py
+│       ├── config_schema.py
+│       ├── generate_config_from_schema.py
+│       ├── llm.py
+│       ├── load_config.py
+│       ├── log.py
+│       ├── pipeline_helpers.py
+│       └── route_helpers.py
+├── static
+│   └── favicon.ico
+└── transcripts
+    └── final_transcript.json
+
+16 directories, 91 files

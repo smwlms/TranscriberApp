@@ -1,0 +1,19 @@
+.
+├── index.html
+├── package-lock.json
+├── package.json
+├── postcss.config.cjs
+├── project-structuur.txt
+├── src
+│   ├── App.svelte
+│   ├── index.css
+│   ├── lib
+│   │   ├── api.js
+│   │   ├── components
+│   │   └── stores.js
+│   └── main.js
+├── svelte.config.js
+├── tailwind.config.js
+└── vite.config.js
+
+4 directories, 13 files
