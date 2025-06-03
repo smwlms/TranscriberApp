@@ -43,10 +43,8 @@ def merge_results(
     # Handle empty whisper segments input
     if not whisper_segments:
         log("No whisper segments provided for merging.", "WARNING")
-        # If diarization result exists but no whisper segments, still return empty list
-        return [] if diarization_result else None # Return None only if both are missing? Or always empty list if segments are empty?
-        # Returning empty list if whisper segments are empty seems more consistent.
-        # Let's return an empty list here if whisper_segments is empty, regardless of diarization.
+        # Without Whisper segments we cannot perform a merge, but returning an
+        # empty list keeps downstream processing consistent.
         return []
 
 
