@@ -78,7 +78,11 @@ def run_part1(job_id: str, config_overrides: Dict[str, Any]):
 
     try:
         # --- Step 1: Load and Merge Configuration ---
-        log(f"Step 1: Loading and merging configuration...", "DEBUG", job_id=job_id)
+        log(
+            "Step 1: Loading and merging configuration...",
+            "DEBUG",
+            job_id=job_id,
+        )
         base_config = load_config()
         job_config = merge_configs(base_config, config_overrides)
         job_manager._update_job_state(job_id, {"config": job_config}) # Sla de gebruikte config op
@@ -86,7 +90,7 @@ def run_part1(job_id: str, config_overrides: Dict[str, Any]):
         check_stop(job_id, "configuration loading")
 
         # --- Step 2: Validate Input Paths and Parameters ---
-        log(f"Step 2: Validating inputs...", "DEBUG", job_id=job_id)
+        log("Step 2: Validating inputs...", "DEBUG", job_id=job_id)
         input_audio_rel_path_str = job_config.get("input_audio")
         if not input_audio_rel_path_str:
             raise ValueError("Configuration Error: 'input_audio' path missing.")
@@ -124,7 +128,11 @@ def run_part1(job_id: str, config_overrides: Dict[str, Any]):
         word_timestamps_enabled = job_config.get("word_timestamps_enabled", True) # Was False, True is meestal beter voor review
 
         # --- Step 3: Audio Processing (Transcription & Diarization) ---
-        log(f"Step 3: Starting audio processing (Transcription & Diarization)...", "INFO", job_id=job_id)
+        log(
+            "Step 3: Starting audio processing (Transcription & Diarization)...",
+            "INFO",
+            job_id=job_id,
+        )
         job_manager.update_status(job_id, STATUS_PROCESSING_AUDIO)
         start_time_audio = time.time()
 
@@ -171,7 +179,11 @@ def run_part1(job_id: str, config_overrides: Dict[str, Any]):
         print(f"--- PRINT DEBUG (pipeline_part1): Reached beginning of Step 4 (Name Detection) for job {job_id} ---", flush=True)
 
         if name_detection_enabled and NAME_DETECTOR_AVAILABLE:
-            log(f"Step 4: Attempting speaker name detection (LLM)...", "INFO", job_id=job_id)
+            log(
+                "Step 4: Attempting speaker name detection (LLM)...",
+                "INFO",
+                job_id=job_id,
+            )
             job_manager.update_status(job_id, STATUS_DETECTING_NAMES)
             start_time_detect = time.time()
             try:
@@ -196,13 +208,17 @@ def run_part1(job_id: str, config_overrides: Dict[str, Any]):
                 job_manager.add_log(job_id, f"Speaker name detection finished in {elapsed_detect}s. Proposed map keys: {list(proposed_map_to_save.keys())}", "SUCCESS")
 
                 try:
-                    if proposed_map_path_abs is None: raise ValueError("proposed_map_path_abs is None before saving map")
+                    if proposed_map_path_abs is None:
+                        raise ValueError("proposed_map_path_abs is None before saving map")
                     with open(proposed_map_path_abs, "w", encoding='utf-8') as f:
                         json.dump(proposed_map_to_save, f, indent=2, ensure_ascii=False)
                     job_manager.add_log(job_id, f"Proposed speaker map saved: {proposed_map_path_rel}", "INFO")
 
                     if detection_context_snippets: # Alleen opslaan als er snippets zijn
-                        if context_snippets_path_abs is None: raise ValueError("context_snippets_path_abs is None before saving snippets")
+                        if context_snippets_path_abs is None:
+                            raise ValueError(
+                                "context_snippets_path_abs is None before saving snippets"
+                            )
                         with open(context_snippets_path_abs, "w", encoding='utf-8') as f:
                             json.dump(detection_context_snippets, f, indent=2, ensure_ascii=False)
                         job_manager.add_log(job_id, f"Context snippets saved: {context_snippets_path_rel}", "INFO")
@@ -217,8 +233,10 @@ def run_part1(job_id: str, config_overrides: Dict[str, Any]):
                 log(f"Speaker name detection step encountered an error: {e_detect}. Proceeding without proposed names.", "ERROR", job_id=job_id)
                 log(traceback.format_exc(), "DEBUG", job_id=job_id)
                 job_manager.add_log(job_id, "Speaker name detection failed, proceeding without proposed names.", "WARNING")
-                if proposed_map_path_abs and proposed_map_path_abs.exists(): proposed_map_path_abs.unlink(missing_ok=True)
-                if context_snippets_path_abs and context_snippets_path_abs.exists(): context_snippets_path_abs.unlink(missing_ok=True)
+                if proposed_map_path_abs and proposed_map_path_abs.exists():
+                    proposed_map_path_abs.unlink(missing_ok=True)
+                if context_snippets_path_abs and context_snippets_path_abs.exists():
+                    context_snippets_path_abs.unlink(missing_ok=True)
                 proposed_map_to_save = {} # Reset naar lege map
 
             job_manager.update_progress(job_id, PROGRESS_AFTER_NAME_DETECT)
@@ -236,7 +254,7 @@ def run_part1(job_id: str, config_overrides: Dict[str, Any]):
 
         review_info = {}
         try:
-            log(f"Step 5 Checkpoint 2a: Creating review_info dict...", "DEBUG", job_id=job_id)
+            log("Step 5 Checkpoint 2a: Creating review_info dict...", "DEBUG", job_id=job_id)
             # Zorg ervoor dat paden relatief zijn en alleen worden toegevoegd als het bestand daadwerkelijk bestaat
             # Dit is belangrijk voor de frontend die get_review_data aanroept.
             transcript_exists = intermediate_transcript_path_abs is not None and intermediate_transcript_path_abs.exists()
@@ -251,15 +269,23 @@ def run_part1(job_id: str, config_overrides: Dict[str, Any]):
             if review_info["intermediate_transcript_path"] is None:
                  # Dit zou niet mogen gebeuren als de eerdere opslag succesvol was.
                  raise RuntimeError("Intermediate transcript file missing or path is None before finalization of Part 1.")
-            log(f"Step 5 Checkpoint 3: Successfully created review_info: {review_info}", "DEBUG", job_id=job_id)
+            log(
+                f"Step 5 Checkpoint 3: Successfully created review_info: {review_info}",
+                "DEBUG",
+                job_id=job_id,
+            )
         except Exception as e_info:
              log(f"CRITICAL ERROR creating review_info dictionary: {e_info}", "CRITICAL", job_id=job_id)
              raise RuntimeError(f"Failed to create review_info dictionary: {e_info}") from e_info # Propagate error
 
         try:
-            log(f"Step 5 Checkpoint 3a: Running check_stop (before final state update)...", "DEBUG", job_id=job_id)
+            log(
+                "Step 5 Checkpoint 3a: Running check_stop (before final state update)...",
+                "DEBUG",
+                job_id=job_id,
+            )
             check_stop(job_id, "before final state update in Part 1")
-            log(f"Step 5 Checkpoint 4: Passed check_stop.", "DEBUG", job_id=job_id)
+            log("Step 5 Checkpoint 4: Passed check_stop.", "DEBUG", job_id=job_id)
         except InterruptedError as ie_final: # Vang specifiek InterruptedError
             raise ie_final # Gooi opnieuw zodat de outer try block het correct afhandelt
         except Exception as e_stop: # Vang andere errors van check_stop
@@ -311,11 +337,16 @@ def run_part1(job_id: str, config_overrides: Dict[str, Any]):
         log_level = "WARNING" if status_to_set == STATUS_STOPPED else "ERROR"
         error_msg_detail = str(e)
 
-        if isinstance(e, FileNotFoundError): error_msg_prefix = "Required file not found"
-        elif isinstance(e, ValueError): error_msg_prefix = "Invalid configuration or value"
-        elif isinstance(e, RuntimeError): error_msg_prefix = "Processing step runtime error"
-        elif isinstance(e, InterruptedError): error_msg_prefix = f"Stopped by user request"
-        else: error_msg_prefix = "Pipeline error" # Zou niet moeten gebeuren met huidige excepts
+        if isinstance(e, FileNotFoundError):
+            error_msg_prefix = "Required file not found"
+        elif isinstance(e, ValueError):
+            error_msg_prefix = "Invalid configuration or value"
+        elif isinstance(e, RuntimeError):
+            error_msg_prefix = "Processing step runtime error"
+        elif isinstance(e, InterruptedError):
+            error_msg_prefix = "Stopped by user request"
+        else:
+            error_msg_prefix = "Pipeline error"  # Zou niet moeten gebeuren met huidige excepts
 
         # Maak het volledige error bericht
         full_error_msg = f"Pipeline Part 1 {status_to_set.lower()}: {error_msg_prefix}"

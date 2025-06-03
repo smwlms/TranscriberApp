@@ -3,7 +3,7 @@
 import yaml
 import traceback # Keep for logging unexpected errors
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 # Import logging utility first
 # Assuming basic console logging might be available even if config loading fails partially
@@ -40,7 +40,11 @@ def load_config(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
     # Step 1: Ensure config file exists (generate if not)
     if not config_existed_initially:
         log(f"Configuration file not found at '{config_path}'. Attempting to generate default config...", "WARNING")
-        generated = generate_default_config(schema_path=DEFAULT_SCHEMA_PATH, output_path=config_path, overwrite=False)
+        _ = generate_default_config(
+            schema_path=DEFAULT_SCHEMA_PATH,
+            output_path=config_path,
+            overwrite=False,
+        )
         # Check again if file exists after attempting generation
         if not config_path.is_file():
              log(f"Failed to generate or find config file at '{config_path}'. Cannot load configuration.", "ERROR")
@@ -66,7 +70,10 @@ def load_config(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
 
         # Step 3: Automatically update the loaded config with missing schema defaults
         # This function logs its actions and might write changes back to config_path.
-        log(f"Checking configuration against schema and updating with defaults (if necessary)...", "INFO")
+        log(
+            "Checking configuration against schema and updating with defaults (if necessary)...",
+            "INFO",
+        )
         was_updated = auto_update_config(config_path=config_path, schema_path=DEFAULT_SCHEMA_PATH)
         # auto_update_config returns True if it saved changes to the file
 

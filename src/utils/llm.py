@@ -2,10 +2,9 @@
 
 import subprocess
 import yaml # Keep yaml for update_config_with_available_models
-import json
 from pathlib import Path
 # Ensure Union is imported from typing
-from typing import List, Dict, Optional, Union, Any # Added Any
+from typing import List, Dict, Optional, Union
 
 # Assuming log utility is adapted for English messages
 from src.utils.log import log
@@ -55,7 +54,10 @@ def _run_ollama_command(command: List[str], input_data: Optional[str] = None, ti
         return process.stdout.strip()
     except FileNotFoundError:
         # Specific error if 'ollama' command isn't found
-        log(f"Error: 'ollama' command not found. Please ensure Ollama is installed and in the system's PATH.", "CRITICAL")
+        log(
+            "Error: 'ollama' command not found. Please ensure Ollama is installed and in the system's PATH.",
+            "CRITICAL",
+        )
         return None
     except subprocess.TimeoutExpired:
         log(f"Ollama command timed out after {timeout} seconds: {' '.join(command)}", "ERROR")
@@ -102,7 +104,8 @@ def is_model_available(model_name: str, local_models: Optional[List[str]] = None
     Returns:
         True if the model is available, False otherwise.
     """
-    if not model_name: return False # Handle empty or None model name
+    if not model_name:
+        return False  # Handle empty or None model name
     # Fetch list if not provided
     current_local_models = local_models if local_models is not None else get_local_models()
     return model_name in current_local_models
@@ -165,12 +168,18 @@ def update_config_with_available_models(config_path: Path = DEFAULT_CONFIG_PATH)
 
     current_llm_prefs = config.get("llm_models", {})
     if not isinstance(current_llm_prefs, dict):
-        log(f"'llm_models' section in config is not a valid dictionary. Cannot update preferences.", "WARNING")
+        log(
+            "'llm_models' section in config is not a valid dictionary. Cannot update preferences.",
+            "WARNING",
+        )
         return False
 
     available_models = get_local_models()
     if not available_models:
-        log(f"No local models detected via 'ollama list'. Cannot reliably update model preferences. Aborting update.", "WARNING")
+        log(
+            "No local models detected via 'ollama list'. Cannot reliably update model preferences. Aborting update.",
+            "WARNING",
+        )
         return False # Avoid wiping preferences if ollama list fails
 
     # Get the preferences filtered by availability
@@ -293,7 +302,10 @@ def summarize_transcript(transcript_text: str, config: dict, context: str = "") 
     """
     # Validate input text
     if not transcript_text or not isinstance(transcript_text, str):
-        log(f"Cannot summarize: Invalid or empty transcript text provided.", "ERROR")
+        log(
+            "Cannot summarize: Invalid or empty transcript text provided.",
+            "ERROR",
+        )
         return None
 
     log(f"Preparing summary for transcript text (Length: {len(transcript_text)} chars)", "INFO")
@@ -340,13 +352,17 @@ if __name__ == "__main__":
     from src.utils.log import setup_logging # Need setup for logging
     import logging
 
-    print("-" * 40); print("--- Testing LLM Utilities ---"); print("-" * 40)
+    print("-" * 40)
+    print("--- Testing LLM Utilities ---")
+    print("-" * 40)
     setup_logging(level=logging.DEBUG) # Enable debug logs for testing
 
     print("\nFetching available local models...")
     models = get_local_models()
-    if models: print(f"Available models: {', '.join(models)}")
-    else: print("Could not fetch models or none available. Ensure Ollama is running.")
+    if models:
+        print(f"Available models: {', '.join(models)}")
+    else:
+        print("Could not fetch models or none available. Ensure Ollama is running.")
 
     # Example: Test checking model availability
     if models:
@@ -366,9 +382,12 @@ if __name__ == "__main__":
             result = run_llm(test_prompt, test_model, test_config, timeout=60)
             print("\nResult from run_llm:")
             print(result or "run_llm failed or returned None (Check Ollama status/model availability).")
-        elif not models: print("\nSkipping run_llm test: No local models found.")
-        else: print("\nSkipping run_llm test: 'llm_models' not found or invalid in config.")
-    except Exception as e: print(f"\nError during run_llm test setup/execution: {e}")
+        elif not models:
+            print("\nSkipping run_llm test: No local models found.")
+        else:
+            print("\nSkipping run_llm test: 'llm_models' not found or invalid in config.")
+    except Exception as e:
+        print(f"\nError during run_llm test setup/execution: {e}")
 
     # --- Example: Test summarize_transcript ---
     print("\n--- Testing summarize_transcript ---")
@@ -382,8 +401,11 @@ if __name__ == "__main__":
              print("\nResult from summarize_transcript:")
              print(summary_result or "Summarize task failed (Check Ollama status/models).")
         else:
-             print("\nSkipping summarize_transcript test: No models configured for 'summary' task.")
-    except Exception as e: print(f"\nError during summarize_transcript test: {e}")
+            print("\nSkipping summarize_transcript test: No models configured for 'summary' task.")
+    except Exception as e:
+        print(f"\nError during summarize_transcript test: {e}")
 
 
-    print("-" * 40); print("--- LLM Utility Testing Complete ---"); print("-" * 40)
+    print("-" * 40)
+    print("--- LLM Utility Testing Complete ---")
+    print("-" * 40)

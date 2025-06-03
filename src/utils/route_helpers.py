@@ -30,7 +30,8 @@ def parse_config_overrides_from_form(form_data, schema_info: Dict[str, Any]) -> 
 
         # Determine the key name expected in the form data (allow mapping)
         form_key = key
-        if key == "extra_context_prompt": form_key = "custom_prompt"
+        if key == "extra_context_prompt":
+            form_key = "custom_prompt"
         # Add other mappings if needed
 
         if form_key in form_data:

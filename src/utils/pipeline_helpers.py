@@ -1,11 +1,8 @@
 # src/utils/pipeline_helpers.py
 
-from typing import Dict, Any
-
 # --- Import dependencies directly ---
 # Removed fallback imports; rely on correct module structure.
 from src.job_manager import job_manager
-from src.utils.log import log
 
 
 def check_stop(job_id: str, current_step: str = "process"):
