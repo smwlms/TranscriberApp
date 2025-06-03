@@ -6,9 +6,11 @@
 # en gebruik de context uit config.yaml (extra_context_prompt).
 # =============================================================================
 
-# Pas deze paden aan indien nodig:
-CONFIG_PATH="/Users/samuelwillems/Documents/GitHub/TranscriberApp/config.yaml"
-TRANSCRIPT_JSON="/Users/samuelwillems/Documents/GitHub/TranscriberApp/transcripts/intermediate_transcript.json"
+# Determine script directory (repo root when run from project root)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Default locations relative to repository root; can be overridden via env vars
+CONFIG_PATH="${CONFIG_PATH:-$SCRIPT_DIR/config.yaml}"
+TRANSCRIPT_JSON="${TRANSCRIPT_JSON:-$SCRIPT_DIR/transcripts/intermediate_transcript.json}"
 
 python3 <<PYCODE
 import yaml, json, sys
