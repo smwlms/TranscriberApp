@@ -44,7 +44,7 @@ class IconFormatter(logging.Formatter):
         return f"{timestamp} {icon} {message_part}"
 
 # --- Logger Setup ---
-app_logger = logging.getLogger('RealEstateTranscriber')
+app_logger = logging.getLogger('TranscriberApp')
 _handlers_configured = False
 
 def setup_logging(config_path: Path = DEFAULT_CONFIG_PATH, level: int = logging.INFO):
@@ -124,7 +124,7 @@ def log(message: str,
         message = f"[{job_id}] {message}"
 
     level_upper = level.upper()
-    logger_instance = logging.getLogger('RealEstateTranscriber')
+    logger_instance = logging.getLogger('TranscriberApp')
 
     if level_upper == "DEBUG":
         logger_instance.debug(message)

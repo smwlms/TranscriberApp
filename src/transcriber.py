@@ -357,11 +357,11 @@ if __name__ == "__main__":
         # Ensure logger is setup for test runs if not already done globally
         try:
             # Minimal setup if global setup didn't happen
-            if not logging.getLogger('RealEstateTranscriber').hasHandlers():
+            if not logging.getLogger('TranscriberApp').hasHandlers():
                 setup_logging(level=logging.DEBUG)
                 print("Test-specific logger setup complete (DEBUG level).")
             else:
-                 print(f"Logger already configured. Current level: {logging.getLevelName(logging.getLogger('RealEstateTranscriber').level)}")
+                 print(f"Logger already configured. Current level: {logging.getLevelName(logging.getLogger('TranscriberApp').level)}")
         except Exception as log_setup_err:
             print(f"Error setting up logging for test: {log_setup_err}")
 

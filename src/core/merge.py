@@ -7,7 +7,7 @@ from typing import List, Dict, Optional, Any
 try:
     # Import the specific types needed for clarity
     from pyannote.core import Segment as PyannoteSegment, Annotation
-    from faster_whisper.transcribe import Segment as WhisperSegmentObject, Word as WhisperWordObject
+    from faster_whisper.transcribe import Segment as WhisperSegmentObject
 except ImportError as e:
     raise ImportError(
         "Error: pyannote.core or faster_whisper types not found. "
