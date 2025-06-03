@@ -1,32 +1,27 @@
 # src/pipeline_part1.py
-print("<<<<< LOADING src/pipeline_part1.py - VERSION CHECK (DATUM/TIJD OF VERSIENUMMER) >>>>>")
 
-import time
-import os
 import json
+import os
+import time
 import traceback
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from src.job_manager import job_manager, STATUS_RUNNING, STATUS_PROCESSING_AUDIO, \
-    STATUS_DETECTING_NAMES, STATUS_WAITING_FOR_REVIEW, \
-    STATUS_STOPPED, STATUS_FAILED
-from src.transcriber import transcribe_and_diarize, DEFAULT_WHISPER_MODEL, \
-     DEFAULT_COMPUTE_TYPE, DEFAULT_PYANNOTE_PIPELINE
-
-try:
-    from src.speaker_name_detector import detect_speaker_names
-    NAME_DETECTOR_AVAILABLE = True
-except ImportError:
-    print("[PipelinePart1 WARNING] Speaker name detector module (src.speaker_name_detector) not found, disabling automatic name detection.")
-    NAME_DETECTOR_AVAILABLE = False
-    # Aangepaste dummy voor consistentie met de verwachte return signature in deze flow
-    def detect_speaker_names(*args, **kwargs) -> Tuple[Dict[str, Any], Dict[int, str]]: # Oorspronkelijk Dict[str, Optional[str]]
-        # Als de "echte" detector een Dict[str, Dict[str, Any]] teruggeeft, zou de dummy dat ook moeten doen.
-        # Voor nu houden we het simpel, de verwerkingslogica in run_part1 probeert dit te accommoderen.
-        return {}, {}
-
-
+from src.job_manager import (
+    job_manager,
+    STATUS_RUNNING,
+    STATUS_PROCESSING_AUDIO,
+    STATUS_DETECTING_NAMES,
+    STATUS_WAITING_FOR_REVIEW,
+    STATUS_STOPPED,
+    STATUS_FAILED,
+)
+from src.transcriber import (
+    transcribe_and_diarize,
+    DEFAULT_WHISPER_MODEL,
+    DEFAULT_COMPUTE_TYPE,
+    DEFAULT_PYANNOTE_PIPELINE,
+)
 from src.utils.load_config import load_config
 from src.utils.config_schema import PROJECT_ROOT
 from src.utils.log import log
@@ -35,8 +30,23 @@ from src.constants import (
     PROGRESS_START as APP_PROGRESS_START,
     PROGRESS_AFTER_AUDIO_PROCESSING as APP_PROGRESS_AFTER_AUDIO_PROCESSING,
     PROGRESS_AFTER_NAME_DETECT as APP_PROGRESS_AFTER_NAME_DETECT,
-    PROGRESS_WAITING_REVIEW as APP_PROGRESS_WAITING_REVIEW
+    PROGRESS_WAITING_REVIEW as APP_PROGRESS_WAITING_REVIEW,
 )
+
+try:
+    from src.speaker_name_detector import detect_speaker_names
+    NAME_DETECTOR_AVAILABLE = True
+except ImportError:
+    log(
+        "[PipelinePart1 WARNING] Speaker name detector module (src.speaker_name_detector) not found, disabling automatic name detection.",
+        "WARNING",
+    )
+    NAME_DETECTOR_AVAILABLE = False
+
+    def detect_speaker_names(*args, **kwargs) -> Tuple[Dict[str, Any], Dict[int, str]]:
+        return {}, {}
+
+log("Loaded src/pipeline_part1.py", "DEBUG")
 
 # Gebruik de geimporteerde constantes met hun alias
 PROGRESS_START = APP_PROGRESS_START
