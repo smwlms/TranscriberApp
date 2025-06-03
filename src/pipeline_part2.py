@@ -1,6 +1,5 @@
 # src/pipeline_part2.py
 # Begin van src/pipeline_part2.py
-print("<<<<< LOADING src/pipeline_part2.py - VERSION CHECK (DATUM/TIJD OF VERSIENUMMER) >>>>>")
 
 import time
 import os
@@ -39,6 +38,9 @@ from src.utils.pipeline_helpers import check_stop
 from src.utils.config_schema import PROJECT_ROOT
 from src.database_logger import log_job_to_db, get_db_path # get_db_path is niet gebruikt, maar kan blijven
 from src.utils.log import log
+
+# Log module load
+log("Loaded src/pipeline_part2.py", "DEBUG")
 
 # --- Define Folder Paths using constants ---
 RESULTS_DIR = PROJECT_ROOT / RESULTS_FOLDER_NAME

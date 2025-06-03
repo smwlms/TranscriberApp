@@ -1,6 +1,5 @@
 # src/job_manager.py
 # Begin van src/job_manager.py
-print("<<<<< LOADING src/job_manager.py - VERSION CHECK (DATUM/TIJD OF VERSIENUMMER) >>>>>")
 
 
 import uuid
@@ -19,6 +18,8 @@ from src.constants import (
     STATUS_COMPLETED, STATUS_FAILED, STATUS_STOPPED, STATUS_UNKNOWN,
     TERMINAL_STATUSES, STOPPABLE_STATUSES
 )
+
+log("Loaded src/job_manager.py", "DEBUG")
 
 
 class JobManager:

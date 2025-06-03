@@ -5,7 +5,6 @@ van de Transcriber‑pipeline.
 """
 from __future__ import annotations # DEZE MOET HIER, ALS EERSTE IMPORT/CODE
 
-print("<<<<< LOADING src/routes/review_routes.py - VERSION (jouw versie hier) >>>>>") # DAARNA DE PRINT
 
 
 import json
@@ -19,6 +18,8 @@ from src.job_manager import STATUS_WAITING_FOR_REVIEW, job_manager
 from src.pipeline_part2 import run_part2
 from src.utils.config_schema import PROJECT_ROOT
 from src.utils.log import log
+
+log("Loaded src/routes/review_routes.py", "DEBUG")
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Blueprint
