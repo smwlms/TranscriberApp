@@ -4,7 +4,6 @@
   import { apiBaseUrl } from '../stores.js';
   import {
     getReviewData as apiGetReviewData,
-    updateReviewData as apiUpdateReviewData,
     updateTranscriptData
   } from '../api.js';
 
@@ -123,8 +122,7 @@
         console.log('[ReviewDialog] Transcript is being edited, saving transcript first...');
         await saveTranscriptEdits();
       }
-      console.log('[ReviewDialog] Submitting final speaker map:', editedMap);
-      await apiUpdateReviewData(jobId, editedMap);
+      console.log('[ReviewDialog] Dispatching final speaker map to parent:', editedMap);
       dispatch('submit', editedMap);
     } catch (e) {
       console.error('[ReviewDialog] saveAll operation failed:', e);
