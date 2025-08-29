@@ -4,7 +4,8 @@
   import { apiBaseUrl } from '../stores.js';
   import {
     getReviewData as apiGetReviewData,
-    updateTranscriptData
+    updateTranscriptData,
+    reDetectNames
   } from '../api.js';
 
   export let jobId;
@@ -22,9 +23,12 @@
   let uniqueSpeakers = [];
   let editedMap = {};
   let contextVisible = {};
+  let rolesHint = {};
+  let firstSpeakerId = null;
 
   let isEditingTranscript = false;
   let editedTranscript = {};
+  let transcriptContainer; // scroll control when toggling editor
 
   let audioPlayer;
   let currentWordId = null;
@@ -48,6 +52,8 @@
       transcript = data.intermediate_transcript || [];
       proposedMap = data.proposed_map || {};
       contextSnippets = data.context_snippets || {};
+      rolesHint = data.roles_hint || {};
+      firstSpeakerId = data.first_speaker_id || null;
       uniqueSpeakers = Array.from(new Set(transcript.map((s) => s.speaker))).sort();
 
       const initialEditedMap = {};
@@ -71,12 +77,76 @@
     contextVisible[speakerId] = !contextVisible[speakerId];
   }
 
+  function swapNames() {
+    // Simple 2-speaker swap helper. If more, swap the first two.
+    const ids = uniqueSpeakers.slice(0, 2);
+    if (ids.length < 2) return;
+    const a = ids[0], b = ids[1];
+    const tmp = editedMap[a];
+    editedMap[a] = editedMap[b];
+    editedMap[b] = tmp;
+  }
+
+  const iconSize = 14;
+  const iconColor = '#60a5fa';
+  function PhoneOutgoing(){return `<svg width='${iconSize}' height='${iconSize}' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'><path d='M21 16.5v3a2 2 0 0 1-2.18 2 19.86 19.86 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.86 19.86 0 0 1 1.5 3.18 2 2 0 0 1 3.5 1h3a2 2 0 0 1 2 1.72c.12.86.33 1.7.62 2.5a2 2 0 0 1-.45 2.11L7.1 8.9a16 16 0 0 0 6 6l1.57-1.57a2 2 0 0 1 2.11-.45c.8.29 1.64.5 2.5.62A2 2 0 0 1 21 16.5z' stroke='${iconColor}' stroke-width='1.5'/></svg>`}
+  function PhoneIncoming(){return `<svg width='${iconSize}' height='${iconSize}' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'><path d='M3 7.5v-3A2 2 0 0 1 5.18 2a19.86 19.86 0 0 1 8.63 3.07 19.5 19.5 0 0 1 6 6A19.86 19.86 0 0 1 22.5 20.82 2 2 0 0 1 20.5 23h-3a2 2 0 0 1-2-1.72 13 13 0 0 1-.62-2.5 2 2 0 0 1 .45-2.11l1.57-1.57a16 16 0 0 1-6-6L8.9 7.1a2 2 0 0 1-2.11-.45 13 13 0 0 1-2.5-.62A2 2 0 0 1 3 7.5z' stroke='${iconColor}' stroke-width='1.5'/></svg>`}
+  function normalized(s){return (s||'').toString().trim().toLowerCase();}
+  function roleForSpeaker(sid){
+    const name = normalized(editedMap[sid] || proposedMap[sid]?.name);
+    const caller = normalized(rolesHint.caller);
+    const callee = normalized(rolesHint.callee);
+    if (name && caller && name === caller) return 'caller';
+    if (name && callee && name === callee) return 'callee';
+    if (!name && firstSpeakerId && sid === firstSpeakerId && (caller || callee)) return 'caller?';
+    return null;
+  }
+
   function getRelevantContext(speakerId) {
     const reasoningIndices = proposedMap[speakerId]?.reasoning_indices || [];
     if (!reasoningIndices.length) return 'Geen context beschikbaar.';
     return reasoningIndices
       .map((i) => contextSnippets[String(i)] ?? `(Snippet ${i} niet gevonden)`)
       .join('\n–––\n');
+  }
+
+  const STOP_NAMES = new Set(['van','wel','ja','nee','u','uw','de','het','een','oke','oké','ok','goed','dag','hallo','hoi','hey','bedankt','thanks','als','dat','dit','eh','euh','uh','uhm','hm','meneer','mevrouw','sir','madam','beste','goedemiddag','goedenavond','goedemorgen']);
+  function isLikelyName(s){
+    if (!s) return false; const t = normalized(s);
+    if (!t || STOP_NAMES.has(t)) return false;
+    return /^[a-zà-öø-ÿ][a-zà-öø-ÿ\-']{1,}$/i.test(t);
+  }
+  function greetingMatches() {
+    const re = /^(?:ja|hallo|hoi|hey|dag|goedemiddag|goedenavond|goedemorgen)[,\s]+([A-Z][\w\-]+)/i;
+    const matches = [];
+    const N = Math.min(8, transcript.length);
+    for (let i=0;i<N;i++){
+      const seg = transcript[i];
+      const txt = (seg?.text||'').trim();
+      const m = txt && txt.match(re);
+      if (m) matches.push({index:i,speaker:seg?.speaker,name:m[1]});
+    }
+    return matches;
+  }
+  function whyFor(sid){
+    const lines = [];
+    const name = editedMap[sid] || proposedMap[sid]?.name || '';
+    if (!isLikelyName(name)) lines.push(`Waarschuwing: '${name||'(leeg)'}' lijkt geen geldige naam.`);
+    if (rolesHint?.caller) lines.push(`Context: caller = ${rolesHint.caller}`);
+    if (rolesHint?.callee) lines.push(`Context: callee = ${rolesHint.callee}`);
+    const role = roleForSpeaker(sid);
+    if (role) lines.push(`Rol-hint: deze spreker is '${role}'.`);
+    const gm = greetingMatches();
+    if (gm.length){
+      const relevant = gm.map(g=>`[Index ${g.index}] ${g.speaker} begroet '${g.name}' → toegewezen aan andere spreker`).join('\n');
+      lines.push('Begroetingspatronen:\n'+relevant);
+    }
+    const ri = proposedMap[sid]?.reasoning_indices || [];
+    if (ri.length){
+      const parts = ri.map(i=>contextSnippets[String(i)]||`(snippet ${i} ontbreekt)`).join('\n---\n');
+      lines.push('LLM‑context:\n'+parts);
+    }
+    return lines.join('\n\n');
   }
 
   function toggleEditTranscript() {
@@ -89,6 +159,8 @@
     }
     isEditingTranscript = !isEditingTranscript;
     error = '';
+    // Scroll editor container to top so user doesn't land at bottom
+    try { transcriptContainer && (transcriptContainer.scrollTop = 0); } catch {}
   }
 
   async function saveTranscriptEdits() {
@@ -100,9 +172,35 @@
         text: editedTranscript[index] ?? segment.text,
         words: [],
       }));
+      // Detect if any of the first N segments changed
+      const N = Math.min(8, transcript.length);
+      let firstNChanged = false;
+      for (let i = 0; i < N; i++) {
+        const before = transcript[i]?.text ?? '';
+        const after = editedTranscript[i] ?? transcript[i]?.text ?? '';
+        if (typeof before === 'string' && typeof after === 'string' && before !== after) {
+          firstNChanged = true; break;
+        }
+      }
       await updateTranscriptData(jobId, updatedFullTranscript);
       transcript = updatedFullTranscript;
       isEditingTranscript = false;
+      // If early segments changed, re-run name detection to refresh suggestions
+      if (firstNChanged) {
+        try {
+          const resp = await reDetectNames(jobId);
+          if (resp && resp.proposed_map) {
+            proposedMap = resp.proposed_map || {};
+            contextSnippets = resp.context_snippets || {};
+            // Prefill editedMap only where still empty
+            Object.keys(proposedMap).forEach((id) => {
+              if (!editedMap[id]) editedMap[id] = proposedMap[id]?.name ?? '';
+            });
+          }
+        } catch (e) {
+          console.warn('[ReviewDialog] reDetectNames failed:', e);
+        }
+      }
       console.log('[ReviewDialog] Transcript updated successfully.');
     } catch (e) {
       console.error('[ReviewDialog] Save transcript failed:', e);
@@ -232,21 +330,39 @@
           {/if}
 
           <section>
-            <h3 class="text-xl font-semibold text-gray-200 mb-3">Spreker Namen Toewijzen</h3>
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-xl font-semibold text-gray-200">Spreker Namen Toewijzen</h3>
+              {#if uniqueSpeakers.length === 2}
+                <button type="button" on:click={swapNames}
+                  class="px-2 py-1 text-xs rounded bg-gray-700 hover:bg-gray-600 text-white"
+                  title="Wissel namen tussen de twee sprekers">
+                  ⇄ Wissel
+                </button>
+              {/if}
+            </div>
             {#if uniqueSpeakers.length === 0 && !isLoading}
                 <p class="text-gray-400">Geen sprekers geïdentificeerd in dit transcript.</p>
             {/if}
             <div class="space-y-4">
               {#each uniqueSpeakers as speakerId (speakerId)}
                 <div class="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-3">
-                  <label for={`speaker-name-${speakerId}`} class="w-full sm:w-32 font-mono text-sm text-gray-300 shrink-0">{speakerId}:</label>
+                  <label for={`speaker-name-${speakerId}`} class="w-full sm:w-32 font-mono text-sm text-gray-300 shrink-0 flex items-center gap-2">{speakerId}:
+                    {#if roleForSpeaker(speakerId) === 'caller'}
+                      {@html PhoneOutgoing()}<span class="text-xs text-blue-400">caller</span>
+                    {:else if roleForSpeaker(speakerId) === 'callee'}
+                      {@html PhoneIncoming()}<span class="text-xs text-blue-400">callee</span>
+                    {:else if roleForSpeaker(speakerId) === 'caller?'}
+                      {@html PhoneOutgoing()}<span class="text-xs text-blue-400">caller?</span>
+                    {/if}
+                  </label>
                   <input
                     id={`speaker-name-${speakerId}`}
                     type="text"
                     bind:value={editedMap[speakerId]}
                     placeholder={proposedMap[speakerId]?.name ? `Voorgesteld: ${proposedMap[speakerId].name}` : 'Naam invoeren...'}
-                    class="flex-grow p-2 rounded bg-gray-800 text-gray-100 border border-gray-700 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none w-full"
+                    class="flex-grow p-2 rounded bg-gray-800 text-gray-100 border focus:ring-2 outline-none w-full {isLikelyName(editedMap[speakerId]) ? 'border-gray-700 focus:ring-blue-500 focus:border-blue-500' : 'border-red-600 focus:ring-red-500 focus:border-red-500'}"
                   />
+                  <button type="button" class="text-xs px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-white" on:click={() => whyVisible[speakerId]=!whyVisible[speakerId]}>Waarom?</button>
                   {#if proposedMap[speakerId]?.reasoning_indices?.length}
                     <button
                       type="button"
@@ -257,6 +373,9 @@
                     </button>
                   {/if}
                 </div>
+                {#if whyVisible[speakerId]}
+                  <pre class="mt-2 p-2 bg-gray-800 border border-gray-700 rounded text-gray-300 text-xs whitespace-pre-wrap">{whyFor(speakerId)}</pre>
+                {/if}
                 {#if contextVisible[speakerId]}
                   <pre
                     class="p-3 bg-gray-800 border border-gray-700 rounded text-gray-300 text-xs overflow-auto max-h-40 custom-scrollbar whitespace-pre-wrap"
@@ -286,7 +405,7 @@
             {#if transcript.length === 0 && !isLoading}
                 <p class="text-gray-400">Geen transcript beschikbaar.</p>
             {/if}
-            <div class="bg-gray-800 p-4 rounded-lg max-h-96 overflow-y-auto text-gray-100 text-base border border-gray-700 custom-scrollbar">
+            <div bind:this={transcriptContainer} class="bg-gray-800 p-4 rounded-lg max-h-96 overflow-y-auto text-gray-100 text-base border border-gray-700 custom-scrollbar">
               {#each transcript as segment, i (segment.id || i)}
                 <div class="mb-4">
                   <strong class="text-blue-400">{editedMap[segment.speaker] || segment.speaker}:</strong>

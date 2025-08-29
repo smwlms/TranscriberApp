@@ -1,5 +1,7 @@
 <script>
     import { configInfo, jobConfigOverrides, selectedPreset } from '../stores.js';
+    import { onMount } from 'svelte';
+    import { getOllamaCatalog, pullOllamaModel, assignLlmModels } from '../api.js';
     import { tick, onDestroy } from 'svelte';
   
     // Local state for accordion visibility (start collapsed)
@@ -45,7 +47,7 @@
     };
   
     // --- Compatibility Rules & Available Types Calculation ---
-    const COMPATIBILITY_RULES = {
+  const COMPATIBILITY_RULES = {
         mps: ['int8', 'float32', 'int16'],
         cuda: ['float16', 'bfloat16', 'int8', 'float32', 'int16'],
         cpu: ['int8', 'float32', 'int16'],
@@ -53,6 +55,10 @@
         error: ['int8', 'float16', 'int16', 'bfloat16', 'float32'], // Fallback: show all
     };
     let availableComputeTypes = [];
+
+    // Curated list of common language codes for Whisper
+    const LANGUAGE_CODES = ['', 'nl','en','fr','de','es','it','pt','pl','ru','tr','sv','da','no','fi'];
+    const LANG_LABEL = (c) => c ? c : 'auto-detect';
     $: { // Calculate available compute types reactively based on detected device
         if (schema?.compute_type?.options && detectedDevice && typeof detectedDevice === 'string') {
             const compatibleTypes = COMPATIBILITY_RULES[detectedDevice] || COMPATIBILITY_RULES['unknown'];
@@ -85,6 +91,106 @@
           applyPreset($selectedPreset);
       }
     }
+
+    // ─── Model Catalog (Ollama) for Analysis Settings ─────────────────────
+    let modelCatalog = [];
+    let localModels = [];
+    let systemSpecs = {};
+    let recommended = {};
+    let modelLoading = false;
+    let modelError = null;
+    const tasks = ['summary','intent','actions','emotion','questions','legal','name_detection','final'];
+    // Selected mapping per task (chips); initialize from overrides if present
+    let modelAssigned = {
+      summary: [], intent: [], actions: [], emotion: [], questions: [], legal: [], name_detection: [], final: []
+    };
+    // Temporary selected option per task (add via dropdown)
+    let toAdd = {};
+
+    function buildOptions(catalogArr, localArr) {
+      const set = new Set([...(localArr || [])]);
+      for (const it of (catalogArr || [])) set.add(it.name);
+      const all = Array.from(set.values());
+      const installed = new Set(localArr || []);
+      all.sort((a,b) => (installed.has(a)?0:1) - (installed.has(b)?0:1) || a.localeCompare(b));
+      return all.map(n => ({ value: n, label: installed.has(n) ? `${n} (installed)` : n }));
+    }
+    $: modelOptions = buildOptions(modelCatalog, localModels);
+
+    async function refreshModels() {
+      modelLoading = true; modelError = null;
+      try {
+        const data = await getOllamaCatalog();
+        modelCatalog = data.catalog || [];
+        localModels = data.local || [];
+        recommended = data.recommended || {};
+        systemSpecs = data.specs || {};
+        // Auto-prefill recommended when empty per task
+        for (const t of tasks) {
+          if (!Array.isArray(modelAssigned[t]) || modelAssigned[t].length === 0) {
+            const rec = recommended[t];
+            if (rec) {
+              modelAssigned[t] = [rec];
+              toAdd[t] = rec; // select in dropdown
+            }
+          }
+        }
+      } catch (e) {
+        modelError = e.message || String(e);
+      } finally { modelLoading = false; }
+    }
+
+    async function pullModel(name) {
+      if (!confirm(`Model '${name}' downloaden?`)) return;
+      modelLoading = true; modelError = null;
+      try {
+        await pullOllamaModel(name);
+        await refreshModels();
+      } catch (e) { modelError = e.message || String(e); }
+      finally { modelLoading = false; }
+    }
+
+    function addModel(task) {
+      const m = toAdd[task];
+      if (!m) return;
+      modelAssigned[task] = Array.from(new Set([...(modelAssigned[task]||[]), m]));
+      toAdd[task] = '';
+    }
+    function removeModel(task, name) {
+      modelAssigned[task] = (modelAssigned[task]||[]).filter(x => x !== name);
+    }
+
+    async function saveModelAssignments() {
+      const mapping = {};
+      for (const t of tasks) if (Array.isArray(modelAssigned[t]) && modelAssigned[t].length) mapping[t] = modelAssigned[t];
+      if (!Object.keys(mapping).length) { alert('Geen toewijzingen om op te slaan.'); return; }
+      modelLoading = true; modelError = null;
+      try {
+        const res = await assignLlmModels(mapping);
+        // update overrides for UI consistency
+        $jobConfigOverrides.llm_models = res.llm_models || mapping;
+        alert('Opgeslagen in config.yaml');
+      } catch (e) { modelError = e.message || String(e); }
+      finally { modelLoading = false; }
+    }
+
+    function applyM1Max32Preset() {
+      modelAssigned = {
+        summary: ['llama3:8b','mistral:7b','phi3:medium'],
+        intent: ['mistral:7b','qwen2:7b','llama3:8b'],
+        actions: ['llama3:8b','phi3:medium'],
+        emotion: ['phi3:medium','llama3:8b'],
+        questions: ['llama3:8b','qwen2:7b'],
+        legal: ['llama3:8b','mistral:7b'],
+        name_detection: ['llama3:8b','mistral:7b'],
+        final: ['llama3:8b','phi3:medium']
+      };
+    }
+
+    // Load model catalog once when component mounts
+    onMount(async () => {
+      await refreshModels();
+    });
   
     // --- Function to Apply Presets (called reactively) ---
     function applyPreset(presetKey) {
@@ -185,7 +291,16 @@
                          {:else} {#each spec.options || [] as option (option)} <option value={option}>{option}</option> {/each} {/if}
                       </select>
                     {:else if spec.type === 'string'}
-                         <input id={key} type="text" bind:value={$jobConfigOverrides[key]} placeholder={key === 'language' ? "e.g., 'en' (blank=auto)" : `Default: ${spec.default ?? ''}`} class="mt-1 block w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm placeholder-gray-400 dark:placeholder-gray-500">
+                      {#if key === 'language'}
+                        <select id={key} bind:value={$jobConfigOverrides[key]} class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm transition-colors">
+                          {#each LANGUAGE_CODES as code (code)}
+                            <option value={code}>{LANG_LABEL(code)}</option>
+                          {/each}
+                        </select>
+                        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Choose a language code or leave on auto-detect.</p>
+                      {:else}
+                        <input id={key} type="text" bind:value={$jobConfigOverrides[key]} placeholder={`Default: ${spec.default ?? ''}`} class="mt-1 block w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm placeholder-gray-400 dark:placeholder-gray-500">
+                      {/if}
                     {:else if spec.type === 'bool'}
                        <div class="flex items-center mt-1"> <input id={key} type="checkbox" bind:checked={$jobConfigOverrides[key]} class="h-4 w-4 text-indigo-600 border-gray-300 dark:border-gray-500 rounded focus:ring-indigo-500 bg-white dark:bg-gray-700"></div>
                     {/if}
@@ -243,10 +358,91 @@
                     </div>
                  {/if}
                {/each}
-               {#if schema.llm_models} <div class="pt-2"> <p class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">LLM Models Used (Read-only):</p> {#if $jobConfigOverrides.llm_models && typeof $jobConfigOverrides.llm_models === 'object'} <div class="text-xs text-gray-600 dark:text-gray-400 space-y-1"> {#each Object.entries($jobConfigOverrides.llm_models) as [task, models]} {#if models && Array.isArray(models) && models.length > 0} <p><span class="font-semibold">{formatLabel(task)}:</span> {models.join(', ')}</p> {/if} {/each} </div> {:else} <p class="text-xs text-gray-500 italic">(Defaults from config.yaml)</p> {/if} {#if schema.llm_models.description} <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{schema.llm_models.description}</p> {/if} </div> {/if}
-             </div>
-           {/if}
-         </div>
+               <!-- Model Manager integrated here -->
+               <div class="pt-2">
+                 <div class="flex items-center justify-between mb-2">
+                   <p class="text-sm font-medium text-gray-700 dark:text-gray-300">LLM Model Selection</p>
+                   <div class="flex items-center gap-2">
+                     <button class="text-xs px-2 py-1 rounded bg-emerald-600 text-white" on:click={applyM1Max32Preset} disabled={modelLoading}>M1 Max 32GB preset</button>
+                     <button class="text-xs px-2 py-1 rounded bg-slate-200 dark:bg-slate-700" on:click={refreshModels} disabled={modelLoading}>{modelLoading ? 'Refreshing…' : 'Refresh'}</button>
+                   </div>
+                 </div>
+
+                 {#if systemSpecs.device}
+                   <div class="text-xs text-slate-600 dark:text-slate-400 mb-2">
+                     Detected: {systemSpecs.os}/{systemSpecs.machine}, CPU cores: {systemSpecs.cpu_count || '?'}, RAM: {systemSpecs.memory_gb ? `${systemSpecs.memory_gb} GB` : '?'}, Device: {systemSpecs.device}
+                   </div>
+                 {/if}
+
+                 {#if modelError}
+                   <div class="text-sm text-red-600 dark:text-red-400 mb-2">{modelError}</div>
+                 {/if}
+
+                 <div class="grid md:grid-cols-2 gap-4">
+                   <div>
+                     <h4 class="text-sm font-medium mb-2">Beschikbare modellen (curated)</h4>
+                     <ul class="space-y-2">
+                       {#each modelCatalog as item}
+                         <li class="p-2 rounded border dark:border-slate-700">
+                           <div class="flex items-center justify-between">
+                             <div>
+                               <div class="font-mono text-xs sm:text-sm">{item.name}</div>
+                               <div class="text-xs text-slate-600 dark:text-slate-400">{item.summary}</div>
+                             </div>
+                             <div>
+                               {#if (localModels || []).includes(item.name)}
+                                 <span class="text-xs px-2 py-1 rounded bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300">Installed</span>
+                               {:else}
+                                 <button class="text-xs px-2 py-1 rounded bg-blue-600 text-white" on:click={() => pullModel(item.name)} disabled={modelLoading}>Pull</button>
+                               {/if}
+                             </div>
+                           </div>
+                         </li>
+                       {/each}
+                     </ul>
+                   </div>
+
+                   <div>
+                     <h4 class="text-sm font-medium mb-2">Toewijzen aan taken</h4>
+                     <div class="space-y-3">
+                       {#each tasks as t}
+                         <div>
+                           <label class="block text-sm font-medium capitalize mb-1" for={`model-select-${t}`}>{t.replace('_',' ')}</label>
+                           <div class="flex flex-wrap gap-2 mb-2">
+                             {#each (modelAssigned[t] || []) as m}
+                               <span class="text-xs px-2 py-1 rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
+                                 {m}
+                                 <button class="ml-1 text-indigo-800 dark:text-indigo-200" title="remove" on:click={() => removeModel(t, m)}>×</button>
+                               </span>
+                             {/each}
+                             {#if !(modelAssigned[t] && modelAssigned[t].length)}
+                               <span class="text-xs text-slate-500">(geen selectie)</span>
+                             {/if}
+                           </div>
+                           <div class="flex items-center gap-2">
+                             <select id={`model-select-${t}`} class="flex-1 text-sm px-2 py-1 border rounded dark:bg-slate-900 dark:border-slate-700" bind:value={toAdd[t]}>
+                               <option value="">— Kies model —</option>
+                               {#if modelLoading}
+                                 <option value="" disabled>Loading…</option>
+                               {/if}
+                               {#each modelOptions as opt (opt.value)}
+                                 <option value={opt.value}>{opt.label}{recommended[t] === opt.value ? ' — recommended' : ''}</option>
+                               {/each}
+                             </select>
+                             <button class="text-sm px-2 py-1 rounded bg-indigo-600 text-white" on:click={() => addModel(t)}>Add</button>
+                           </div>
+                         </div>
+                       {/each}
+                       <div class="pt-2">
+                         <button class="px-3 py-1 rounded bg-indigo-600 text-white" on:click={saveModelAssignments} disabled={modelLoading}>Opslaan in config.yaml</button>
+                       </div>
+                     </div>
+                   </div>
+                 </div>
+               </div>
+            </div>
+          {/if}
+        </div>
   
       </div> {/if} </div>
   <style>

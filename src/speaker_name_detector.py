@@ -5,6 +5,7 @@ import traceback
 from pathlib import Path
 # Updated type hints for new structure
 from typing import List, Dict, Optional, Tuple, Union, Any
+import re
 
 # Import utilities
 from src.utils.log import log
@@ -19,7 +20,10 @@ CONTEXT_WINDOW = 2 # Number of segments before/after a potential ID line to incl
 # *** MODIFICATION 1: Update prompt instructions and example output format ***
 def build_name_detection_prompt(
     transcript_segments: List[Dict[str, Any]],
-    relevant_indices: List[int]
+    relevant_indices: List[int],
+    extra_context: Optional[str] = None,
+    inferred_roles: Optional[Dict[str, str]] = None,
+    first_speaker_id: Optional[str] = None,
     ) -> Tuple[str, Dict[int, str]]:
     """
     Builds the LLM prompt for speaker name detection, including context
@@ -48,6 +52,19 @@ def build_name_detection_prompt(
     prompt_lines.append("If no clear name identification is found for a specific speaker ID *within these excerpts*, the name should be null and the reasoning_indices list empty.")
     prompt_lines.append("\nFormat the output STRICTLY as a single JSON object mapping speaker IDs found in the excerpts to an object containing the detected 'name' (string or null) and 'reasoning_indices' (a list of integers).")
     prompt_lines.append("Example Output: {\"SPEAKER_00\": {\"name\": \"Alice B.\", \"reasoning_indices\": [5, 8]}, \"SPEAKER_01\": {\"name\": null, \"reasoning_indices\": []}}") # Updated Example
+    if extra_context and isinstance(extra_context, str) and extra_context.strip():
+        prompt_lines.append("\nAdditional Context (from user/UI):")
+        prompt_lines.append(extra_context.strip())
+
+    if inferred_roles and (inferred_roles.get('caller') or inferred_roles.get('callee')):
+        prompt_lines.append("\nCall Roles (inferred from context):")
+        if inferred_roles.get('caller'):
+            prompt_lines.append(f"Caller: {inferred_roles['caller']}")
+        if inferred_roles.get('callee'):
+            prompt_lines.append(f"Callee: {inferred_roles['callee']}")
+    if first_speaker_id:
+        prompt_lines.append(f"\nHint: The first segment in the transcript is spoken by speaker ID {first_speaker_id}.")
+
     prompt_lines.append("\n--- Transcript Excerpts ---") # Start of context section
 
     # --- Process Relevant Indices and Add Context ---
@@ -93,12 +110,22 @@ def find_potential_identification_lines(transcript_segments: List[Dict[str, Any]
     """
     # Keywords list - adjust based on expected languages and introduction patterns
     keywords = [
-        "name is", "i am", "i'm", "this is", "call me", "speaking", # English intros
-        "hello", "hi ", "hey ", "good morning", "good afternoon",   # English greetings
-        " my name ", # Variations with spaces
-        # Dutch examples (expand if needed)
-        "dag ", "hallo", "ik ben", "mijn naam is", " met ", # Note spaces
+        # English
+        "name is", "i am", "i'm", "this is", "call me", "speaking",
+        "hello ", "hi ", "hey ", "good morning", "good afternoon",
+        # Dutch common forms
+        "hallo ", "hoi ", "dag ", "goedemiddag", "goedemorgen", "goedenavond",
+        "ik ben", "mijn naam is", " met ",
     ]
+
+    # Regex patterns to detect likely name mentions in Dutch intros/addressing
+    regex_patterns = [
+        r"\b(ik ben|mijn naam is|dit is|u spreekt met|je spreekt met|spreek(?:t)? met)\s+[A-Z][\w\-]+", # explicit intro
+        r"\bmet\s+[A-Z][\w\-]+",                       # telephony: "Met Samuel"
+        r"^(?:ja|hallo|hoi|hey|dag|goedemiddag|goedenavond|goedemorgen)[,\s]+[A-Z][\w\-]+", # greeting + Name
+        r"\b(?:hallo|hoi|hey)\s+[A-Z][\w\-]+",         # inline greeting
+    ]
+    regexes = [re.compile(p, re.IGNORECASE) for p in regex_patterns]
     potential_indices = set() # Use set for automatic deduplication
 
     for i, segment in enumerate(transcript_segments):
@@ -106,7 +133,12 @@ def find_potential_identification_lines(transcript_segments: List[Dict[str, Any]
         # Process only if text exists and is a string
         if text and isinstance(text, str):
             text_lower = text.lower()
-            if any(keyword in text_lower for keyword in keywords):
+            matched = any(keyword in text_lower for keyword in keywords)
+            # If not matched by keyword, try regexes (captures patterns like "Met Samuel", "Ja, Michiel")
+            if not matched:
+                matched = any(rx.search(text) is not None for rx in regexes)
+
+            if matched:
                 # If keyword found, add current index and immediate neighbors
                 potential_indices.add(i)
                 if i > 0: potential_indices.add(i-1)
@@ -115,6 +147,65 @@ def find_potential_identification_lines(transcript_segments: List[Dict[str, Any]
     sorted_indices = sorted(list(potential_indices))
     log(f"Found {len(sorted_indices)} potential name ID line indices: {sorted_indices}", "DEBUG")
     return sorted_indices
+
+
+def _parse_roles_from_context(extra_context: Optional[str]) -> Dict[str, str]:
+    """Parse caller/callee names from extra context like 'Samuel belt Michiel'."""
+    result: Dict[str, str] = {}
+    if not extra_context or not isinstance(extra_context, str):
+        return result
+    text = extra_context.strip()
+    # Common patterns (Dutch/English)
+    patterns = [
+        r"\b([A-Z][\w\-]+)\s+belt\s+([A-Z][\w\-]+)\b",
+        r"\b([A-Z][\w\-]+)\s+belde\s+([A-Z][\w\-]+)\b",
+        r"\b([A-Z][\w\-]+)\s+calls\s+([A-Z][\w\-]+)\b",
+        r"caller[:\s]+([A-Z][\w\-]+).*callee[:\s]+([A-Z][\w\-]+)",
+        r"\bopk(?:omt|lopt)?\b",  # placeholder (not used to extract names)
+    ]
+    for p in patterns:
+        m = re.search(p, text, re.IGNORECASE)
+        if m and len(m.groups()) >= 2:
+            c1 = m.group(1)
+            c2 = m.group(2)
+            c1 = _clean_name(c1)
+            c2 = _clean_name(c2)
+            if _is_valid_name(c1):
+                result['caller'] = c1
+            if _is_valid_name(c2):
+                result['callee'] = c2
+            break
+    return result
+
+
+# --- Name validation helpers -------------------------------------------------
+# A small stop-list to avoid assigning filler/function words as names
+_STOP_NAMES = {
+    'van','wel','ja','nee','u','uw','de','het','een','oke','oké','ok','goed',
+    'dag','hallo','hoi','hey','bedankt','thanks','als','dat','dit','eh','euh',
+    'uh','uhm','hm','meneer','mevrouw','sir','madam','beste','goedemiddag',
+    'goedenavond','goedemorgen'
+}
+_NAME_RE = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\-']{1,}$")
+
+def _clean_name(s: Optional[str]) -> str:
+    if not s:
+        return ''
+    return s.strip().strip('.,!?:;"\'()[]{}')
+
+def _is_valid_name(s: Optional[str]) -> bool:
+    if not s:
+        return False
+    ss = s.strip()
+    if not ss:
+        return False
+    low = ss.lower()
+    if low in _STOP_NAMES:
+        return False
+    # Require at least 2 characters and alphabetic start; allow hyphen/apostrophe inside
+    if not _NAME_RE.match(ss):
+        return False
+    return True
 
 
 # --- Main Detection Function ---
@@ -155,13 +246,32 @@ def detect_speaker_names(
 
     # --- Step 1: Find Potential Lines ---
     potential_indices = find_potential_identification_lines(transcript_segments)
+    extra_ctx = config.get("extra_context_prompt") if isinstance(config, dict) else None
+    roles = _parse_roles_from_context(extra_ctx)
+    first_id = None
+    for seg in transcript_segments:
+        sid = seg.get('speaker')
+        if sid:
+            first_id = sid
+            break
     if not potential_indices:
-        log("No potential name identification keywords found. Skipping LLM detection.", "INFO")
-        return {}, {} # Return empty dicts if no relevant lines
+        # Instead of skipping entirely, fall back to first few segments + extra context
+        fallback_n = min(8, len(transcript_segments))
+        potential_indices = list(range(fallback_n))
+        log(
+            f"No potential name identification keywords found. Using first {fallback_n} segments and any extra context as fallback.",
+            "INFO",
+        )
 
     # --- Step 2: Build Prompt ---
     try:
-        prompt, context_snippets = build_name_detection_prompt(transcript_segments, potential_indices)
+        prompt, context_snippets = build_name_detection_prompt(
+            transcript_segments,
+            potential_indices,
+            extra_context=extra_ctx,
+            inferred_roles=roles,
+            first_speaker_id=first_id,
+        )
         log(f"Built name detection prompt ({len(prompt)} chars). Context snippets generated: {len(context_snippets)}", "DEBUG")
     except Exception as e:
          log(f"Critical error building name detection prompt: {e}", "ERROR")
@@ -289,6 +399,67 @@ def detect_speaker_names(
         log(f"Unexpected error parsing/validating LLM response: {e}", "ERROR")
         log(traceback.format_exc(), "DEBUG")
         final_mapping_with_context = None # Indicate general failure
+
+    # Post‑processing: merge roles + address heuristics to fix common mis-assignments
+    try:
+        final_map: Dict[str, Dict[str, Any]] = final_mapping_with_context or {}
+        # Ensure structure
+        if not isinstance(final_map, dict):
+            final_map = {}
+
+        # Normalize/clean any invalid names coming from the LLM before merging hints
+        for spk, obj in list(final_map.items()):
+            if not isinstance(obj, dict):
+                final_map[spk] = {"name": None, "reasoning_indices": []}
+                continue
+            nm = _clean_name(obj.get('name')) if obj.get('name') is not None else None
+            if nm and not _is_valid_name(nm):
+                nm = None
+            final_map[spk]['name'] = nm
+
+        # Unique speakers by first appearance
+        unique_ids: List[str] = []
+        seen = set()
+        for seg in transcript_segments:
+            sid = seg.get('speaker')
+            if sid and sid not in seen:
+                unique_ids.append(sid); seen.add(sid)
+
+        # 1) Roles from extra context: map first speaker to caller, second to callee when available
+        if roles and unique_ids:
+            caller = roles.get('caller'); callee = roles.get('callee')
+            if first_id and first_id in unique_ids and len(unique_ids) >= 1 and _is_valid_name(caller):
+                final_map.setdefault(first_id, {"name": None, "reasoning_indices": []})
+                if not _is_valid_name(final_map[first_id].get('name')):
+                    final_map[first_id]['name'] = _clean_name(caller)
+            if callee and len(unique_ids) >= 2 and _is_valid_name(callee):
+                other_id = unique_ids[1] if unique_ids[0] == first_id else unique_ids[0]
+                final_map.setdefault(other_id, {"name": None, "reasoning_indices": []})
+                if not _is_valid_name(final_map[other_id].get('name')):
+                    final_map[other_id]['name'] = _clean_name(callee)
+
+        # 2) Greeting/address heuristic: "Hi NAME", "Hallo NAME", "Ja, NAME" means NAME is the other speaker
+        if len(unique_ids) == 2:
+            greet_re = re.compile(r"^(?:ja|hallo|hoi|hey|dag|goedemiddag|goedenavond|goedemorgen)[,\s]+([A-Z][\w\-]+)\b", re.IGNORECASE)
+            for idx, seg in enumerate(transcript_segments[:8]):
+                sid = seg.get('speaker'); txt = (seg.get('text') or '').strip()
+                if not sid or not txt:
+                    continue
+                m = greet_re.search(txt)
+                if not m:
+                    continue
+                addressed = _clean_name(m.group(1))
+                if not _is_valid_name(addressed):
+                    continue
+                # Assign to the other speaker id
+                other_id = unique_ids[1] if sid == unique_ids[0] else unique_ids[0]
+                final_map.setdefault(other_id, {"name": None, "reasoning_indices": []})
+                if not _is_valid_name(final_map[other_id].get('name')):
+                    final_map[other_id]['name'] = addressed
+
+        final_mapping_with_context = final_map
+    except Exception as pp_err:
+        log(f"Post-processing speaker-name mapping failed: {pp_err}", "WARNING")
 
     # Return the final mapping (dict or None) and the context snippets (dict)
     return final_mapping_with_context, context_snippets

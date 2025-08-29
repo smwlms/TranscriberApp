@@ -16,6 +16,7 @@ from flask import Blueprint, abort, jsonify, request
 
 from src.job_manager import STATUS_WAITING_FOR_REVIEW, job_manager
 from src.utils.config_schema import PROJECT_ROOT
+from src.constants import TRANSCRIPTS_FOLDER_NAME, INTERMEDIATE_PROPOSED_MAP_FILENAME, INTERMEDIATE_CONTEXT_SNIPPETS_FILENAME
 from src.utils.log import log
 
 log("Loaded src/routes/review_routes.py", "DEBUG")
@@ -98,6 +99,8 @@ def get_review_data(job_id: str):
         "intermediate_transcript": None,
         "proposed_map": {},
         "context_snippets": {},
+        "roles_hint": {},
+        "first_speaker_id": None,
     }
     errors: List[str] = []
 
@@ -157,6 +160,27 @@ def get_review_data(job_id: str):
             "error": "Transcript kon niet geladen worden (onbekende reden)",
             "details": ["Intermediate transcript is None"],
         }), 500
+
+    # Roles hint from extra_context_prompt
+    try:
+        from src.speaker_name_detector import _parse_roles_from_context as _roles_parser  # local import
+        roles = _roles_parser(job_data.get('config', {}).get('extra_context_prompt'))
+        if roles:
+            payload["roles_hint"] = roles
+    except Exception as e_roles:
+        log(f"Could not parse roles from extra context for job {job_id}: {e_roles}", "DEBUG")
+
+    # First speaker id hint from transcript
+    try:
+        it = payload.get("intermediate_transcript") or []
+        first_id = None
+        for seg in it:
+            sid = seg.get('speaker') if isinstance(seg, dict) else None
+            if sid:
+                first_id = sid; break
+        payload["first_speaker_id"] = first_id
+    except Exception:
+        pass
 
     if errors:
         payload["non_critical_errors"] = errors # Stuur niet-kritieke fouten mee
@@ -292,3 +316,122 @@ def update_transcript_data(job_id: str):
 
 
     return jsonify(message="Transcriptie bijgewerkt", job_id=job_id), 200
+
+# ────────────────────────────────────────────────────────────────────────────────
+@review_bp.route("/re_analyze/<string:job_id>", methods=["POST"])
+def re_analyze_job(job_id: str):
+    """Re-run only the LLM analysis using the final transcript.
+
+    Body (optional): { "transcript": [ ... ] } to override final_transcript.json
+    """
+    log(f"API CALL: POST /re_analyze/{job_id}", "INFO")
+    job_data = job_manager.get_status(job_id)
+    if not job_data:
+        abort(404, description="Job niet gevonden")
+
+    # Optional transcript override written to a temp path then applied inside runner
+    override_rel = None
+    if request.is_json:
+        body = request.get_json() or {}
+        new_transcript = body.get("transcript")
+        if isinstance(new_transcript, list):
+            tmp_rel = Path(TRANSCRIPTS_FOLDER_NAME) / "final_transcript_override.json"
+            try:
+                _safe_write_json(tmp_rel, new_transcript)
+                override_rel = tmp_rel
+            except Exception as e:
+                return jsonify(error=f"Kon override transcript niet schrijven: {e}"), 500
+
+    try:
+        # Lazy import to avoid heavy deps at startup
+        from src.pipeline_part2 import run_analysis_only
+        threading.Thread(
+            target=lambda: run_analysis_only(job_id, override_rel),
+            daemon=True,
+            name=f"ReAnalyzeThread-{job_id}"
+        ).start()
+    except Exception as e:
+        log(f"API: POST /re_analyze - Kon analyse-thread niet starten voor job {job_id}: {e}", "CRITICAL")
+        return jsonify(error=f"Kon re-analyse niet starten: {e}"), 500
+
+    return jsonify(message="Re-analysis gestart"), 202
+
+
+# ────────────────────────────────────────────────────────────────────────────────
+@review_bp.route("/re_detect_names/<string:job_id>", methods=["POST"])
+def re_detect_names(job_id: str):
+    """Re-run speaker name detection on the current intermediate transcript.
+
+    Returns JSON: { proposed_map: {...}, context_snippets: {...} }
+    """
+    log(f"API CALL: POST /re_detect_names/{job_id}", "INFO")
+    job_data = job_manager.get_status(job_id)
+    if not job_data:
+        abort(404, description="Job niet gevonden")
+
+    if job_data.get("status") != STATUS_WAITING_FOR_REVIEW:
+        log(f"API: re_detect_names - Job {job_id} is niet in review-fase (status={job_data.get('status')}).", "WARNING")
+        return jsonify({
+            "error": "Job staat niet in review-fase",
+            "current_status": job_data.get("status")
+        }), 409
+
+    paths = job_data.get("review_data_paths", {})
+    transcript_rel = paths.get("intermediate_transcript_path")
+    if not transcript_rel:
+        abort(500, description="Geen transcriptie-pad bekend voor job")
+
+    # Load transcript JSON
+    transcript = _safe_load_json(transcript_rel, must_exist=True)
+    if not isinstance(transcript, list):
+        abort(500, description="Transcript formaat ongeldig")
+
+    # Load job config for detector
+    config = job_data.get("config", {})
+
+    # Run detector
+    try:
+        from src.speaker_name_detector import detect_speaker_names  # Local import
+        proposed_map_with_ctx, context_snippets = detect_speaker_names(transcript, config)
+    except Exception as e:
+        log(f"Name detection re-run failed for job {job_id}: {e}", "ERROR")
+        log(traceback.format_exc(), "DEBUG")
+        return jsonify(error=f"Name detection failed: {e}"), 500
+
+    # Persist results next to intermediate transcript
+    try:
+        from pathlib import Path as _P
+        tr_rel = _P(transcript_rel)
+        proposed_rel = tr_rel.with_name(INTERMEDIATE_PROPOSED_MAP_FILENAME)
+        context_rel = tr_rel.with_name(INTERMEDIATE_CONTEXT_SNIPPETS_FILENAME)
+        if proposed_map_with_ctx is not None:
+            _safe_write_json(proposed_rel, proposed_map_with_ctx)
+        if context_snippets is not None:
+            _safe_write_json(context_rel, context_snippets)
+        # Update paths in job data (they likely already point here, but keep consistent)
+        job_data["review_data_paths"]["proposed_map_path"] = str(proposed_rel)
+        job_data["review_data_paths"]["context_snippets_path"] = str(context_rel)
+        # Log and return
+        log(f"Re-detected names for job {job_id}. Files updated: {proposed_rel}, {context_rel}", "SUCCESS")
+        return jsonify({
+            "proposed_map": proposed_map_with_ctx or {},
+            "context_snippets": context_snippets or {}
+        })
+    except Exception as e:
+        log(f"Failed to save re-detected name results for job {job_id}: {e}", "ERROR")
+        log(traceback.format_exc(), "DEBUG")
+        return jsonify(error=f"Kon resultaten niet opslaan: {e}"), 500
+
+
+# ────────────────────────────────────────────────────────────────────────────────
+@review_bp.route("/log_client_event/<string:job_id>", methods=["POST"])
+def log_client_event(job_id: str):
+    """Append a log line to the specified job from the UI."""
+    data = request.get_json(silent=True) or {}
+    message = data.get('message') or 'Client event'
+    level = data.get('level') or 'INFO'
+    job_data = job_manager.get_status(job_id)
+    if not job_data:
+        abort(404, description="Job niet gevonden")
+    job_manager.add_log(job_id, message, level)
+    return jsonify({"message": "logged"}), 200

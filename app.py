@@ -2,6 +2,7 @@ print("<<<<< LOADING src/app.py - VERSION CHECK (DATUM/TIJD OF VERSIENUMMER) >>>
 import os
 import sys
 import traceback # Goed voor error logging
+import warnings
 import logging
 from pathlib import Path
 
@@ -60,7 +61,8 @@ from src.transcript_reformatter import format_transcript_html
 
 # Gebruik je eigen setup_logging(), en zorg dat die de root en werkzeug naar wens instelt.
 # De code die je had:
-setup_logging() # Deze zou de root logger en werkzeug idealiter moeten configureren.
+# Gebruik het config-bestand uit de projectroot en forceer DEBUG als fallback
+setup_logging(config_path=PROJECT_ROOT / "config.yaml", level=logging.DEBUG) # Configureer root + werkzeug
 
 # De volgende custom handler is waarschijnlijk overbodig als setup_logging() goed werkt.
 # Het kan zelfs conflicteren of de output van setup_logging() veranderen.
@@ -77,9 +79,47 @@ setup_logging() # Deze zou de root logger en werkzeug idealiter moeten configure
 # ):
 #     root_logger.addHandler(console_handler) # Dit voegt NOG een handler toe als setup_logging al een console handler heeft
 
-# werkzeug_logger = logging.getLogger('werkzeug')
-# werkzeug_logger.setLevel(logging.DEBUG) # Forceert werkzeug naar DEBUG
-# werkzeug_logger.propagate = True # Laat werkzeug logs ook naar root logger gaan
+# ──────────────────────────────────────────────────────────────────────────────
+# Extra logging: werkzeug + Python warnings
+# ──────────────────────────────────────────────────────────────────────────────
+# Route werkzeug (Flask HTTP) logs naar dezelfde handlers als TranscriberApp
+werkzeug_logger = logging.getLogger('werkzeug')
+werkzeug_logger.setLevel(logging.DEBUG)
+app_logger_instance = logging.getLogger('TranscriberApp')
+for handler in app_logger_instance.handlers:
+    if handler not in werkzeug_logger.handlers:
+        werkzeug_logger.addHandler(handler)
+# Voorkom dubbele logs via propagatie
+werkzeug_logger.propagate = False
+
+# Stuur Python warnings ook naar logging, met dezelfde handlers
+logging.captureWarnings(True)
+warnings_logger = logging.getLogger('py.warnings')
+warnings_logger.setLevel(logging.DEBUG)
+for handler in app_logger_instance.handlers:
+    if handler not in warnings_logger.handlers:
+        warnings_logger.addHandler(handler)
+warnings_logger.propagate = False
+
+# Filter om ruis te verminderen: onderdruk status-poll logs van werkzeug
+class _SuppressStatusLogs(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+            # Drop frequent status polls to keep console leesbaar
+            if 'GET /api/v1/status/' in msg:
+                return False
+        except Exception:
+            pass
+        return True
+
+werkzeug_logger.addFilter(_SuppressStatusLogs())
+
+# Toon standaard alle Python warnings (env PYTHONWARNINGS uit .env is te laat)
+try:
+    warnings.simplefilter("default")
+except Exception:
+    pass
 # ----- EINDE AANBEVELING LOGGING SETUP -----
 
 if not initialize_database():
@@ -160,6 +200,7 @@ from src.routes.review_routes import review_bp
 from src.routes.file_routes import file_api_bp
 from src.routes.static_routes import static_files_bp # Voor het serveren van audio/results
 from src.routes.info_routes import info_bp       # Voor /config_info etc.
+from src.routes.ollama_routes import ollama_bp   # Voor /ollama/* endpoints
 
 default_prefix = "/api/v1"
 API_PREFIX = os.getenv("API_PREFIX", default_prefix).rstrip('/') # Verwijder trailing slash indien aanwezig
@@ -168,6 +209,7 @@ app.register_blueprint(pipeline_bp, url_prefix=API_PREFIX)
 app.register_blueprint(review_bp,    url_prefix=API_PREFIX)
 app.register_blueprint(file_api_bp,  url_prefix=API_PREFIX)
 app.register_blueprint(info_bp,      url_prefix=API_PREFIX)
+app.register_blueprint(ollama_bp,    url_prefix=API_PREFIX)
 app.register_blueprint(static_files_bp)  # Deze serveert /audio en /results, meestal zonder prefix
 
 log(f"API blueprints geregistreerd met prefix '{API_PREFIX}'. Static routes ook geregistreerd.", "INFO")
@@ -353,7 +395,12 @@ if __name__ == "__main__":
     # Flask's development server is niet voor productie.
     flask_debug_bool = flask_debug_str in ["true", "1", "t", "yes"]
 
-    log(f"Flask app '{__name__}' wordt gestart op http://{flask_host}:{flask_port}/ | Debug: {flask_debug_bool}", "INFO")
+    # Optionele reloader togglen via env om dubbele logs te vermijden
+    reloader_env_default = "true" if flask_debug_bool else "false"
+    use_reloader_str = os.getenv("FLASK_USE_RELOADER", reloader_env_default).lower()
+    use_reloader_bool = use_reloader_str in ["true", "1", "t", "yes"]
+
+    log(f"Flask app '{__name__}' wordt gestart op http://{flask_host}:{flask_port}/ | Debug: {flask_debug_bool} | Reloader: {use_reloader_bool}", "INFO")
     # Voor development, `use_reloader=True` is vaak standaard als debug=True.
     # Overweeg `use_reloader=False` als je problemen hebt met dubbele initialisatie of threads.
-    app.run(host=flask_host, port=flask_port, debug=flask_debug_bool)
+    app.run(host=flask_host, port=flask_port, debug=flask_debug_bool, use_reloader=use_reloader_bool)

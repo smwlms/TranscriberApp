@@ -8,7 +8,7 @@ import time # Import time
 import json # Import json for testing block below
 import logging # Import logging for testing block below
 from pathlib import Path
-from typing import List, Dict, Optional, Any, Tuple # Ensure Tuple is imported
+from typing import List, Dict, Optional, Any, Tuple, Callable # Ensure Tuple is imported
 
 # --- Local Imports ---
 # Utilities
@@ -75,7 +75,8 @@ def transcribe_and_diarize(
     min_speakers: Optional[int] = None,
     max_speakers: Optional[int] = None,
     # Allow device override
-    compute_device_override: Optional[str] = None
+    compute_device_override: Optional[str] = None,
+    progress_callback: Optional[Callable[[float, Optional[float]], None]] = None
 ) -> Optional[List[Dict[str, Any]]]:
     """
     Orchestrates transcription and diarization using refactored core modules.
@@ -168,7 +169,8 @@ def transcribe_and_diarize(
             whisper_model=whisper_model,
             wav_path=wav_path_to_process,
             language=language,
-            word_timestamps_enabled=word_timestamps_enabled
+            word_timestamps_enabled=word_timestamps_enabled,
+            progress_callback=progress_callback
         )
         log(f"[T&D-{run_id}] run_transcription finished. Output is None: {transcription_output is None}", "DEBUG")
         if transcription_output is None:
@@ -216,6 +218,10 @@ def transcribe_and_diarize(
         log(f"Transcription and diarization process completed successfully for {input_audio_path.name} in {total_time}s.", "SUCCESS")
         log(f"[T&D-{run_id}] End of try block reached successfully.", "DEBUG")
 
+    except InterruptedError as ie:
+         # Planned stop: re-raise so pipeline can mark STOPPED (finally still runs)
+         log(f"[T&D-{run_id}] Interrupted by user stop request: {ie}", "INFO")
+         raise
     except Exception as e:
          # Log the overarching error encountered during the main workflow
          log(f"Critical error during transcription/diarization orchestration for '{input_audio_path.name}': {e}", "CRITICAL")

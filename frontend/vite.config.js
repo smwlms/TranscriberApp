@@ -4,6 +4,7 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 export default defineConfig({
   plugins: [svelte()],
   server: {
+    hmr: { overlay: false },
     proxy: {
       // stuur al je API‐calls door naar je Flask backend
       '/api/v1': {
@@ -17,6 +18,12 @@ export default defineConfig({
         secure: false
       },
       '/results': {
+        target: 'http://127.0.0.1:5000',
+        changeOrigin: true,
+        secure: false
+      }
+      ,
+      '/transcripts': {
         target: 'http://127.0.0.1:5000',
         changeOrigin: true,
         secure: false

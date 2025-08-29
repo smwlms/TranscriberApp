@@ -28,6 +28,7 @@ from src.utils.log import log
 from src.utils.pipeline_helpers import check_stop, merge_configs
 from src.constants import (
     PROGRESS_START as APP_PROGRESS_START,
+    PROGRESS_AFTER_VALIDATION as APP_PROGRESS_AFTER_VALIDATION,
     PROGRESS_AFTER_AUDIO_PROCESSING as APP_PROGRESS_AFTER_AUDIO_PROCESSING,
     PROGRESS_AFTER_NAME_DETECT as APP_PROGRESS_AFTER_NAME_DETECT,
     PROGRESS_WAITING_REVIEW as APP_PROGRESS_WAITING_REVIEW,
@@ -50,6 +51,7 @@ log("Loaded src/pipeline_part1.py", "DEBUG")
 
 # Gebruik de geimporteerde constantes met hun alias
 PROGRESS_START = APP_PROGRESS_START
+PROGRESS_AFTER_VALIDATION = APP_PROGRESS_AFTER_VALIDATION
 PROGRESS_AFTER_AUDIO_PROCESSING = APP_PROGRESS_AFTER_AUDIO_PROCESSING
 PROGRESS_AFTER_NAME_DETECT = APP_PROGRESS_AFTER_NAME_DETECT
 PROGRESS_WAITING_REVIEW = APP_PROGRESS_WAITING_REVIEW
@@ -85,6 +87,14 @@ def run_part1(job_id: str, config_overrides: Dict[str, Any]):
         )
         base_config = load_config()
         job_config = merge_configs(base_config, config_overrides)
+        # Normalize language code to lowercase (faster-whisper expects e.g. 'nl', 'en')
+        try:
+            lang = job_config.get("language")
+            if isinstance(lang, str):
+                lang_norm = lang.strip().lower()
+                job_config["language"] = (lang_norm or None)
+        except Exception:
+            pass
         job_manager._update_job_state(job_id, {"config": job_config}) # Sla de gebruikte config op
         log(f"Part 1: Configuration prepared. Mode: {job_config.get('mode', 'N/A')}", "INFO", job_id=job_id)
         check_stop(job_id, "configuration loading")
@@ -136,6 +146,38 @@ def run_part1(job_id: str, config_overrides: Dict[str, Any]):
         job_manager.update_status(job_id, STATUS_PROCESSING_AUDIO)
         start_time_audio = time.time()
 
+        # Build progress callback to update job progress during transcription
+        start_marker = PROGRESS_AFTER_VALIDATION
+        end_marker = PROGRESS_AFTER_AUDIO_PROCESSING
+        last_pct = start_marker
+        last_log_t = time.time()
+
+        def _progress_cb(processed_sec: float, ratio: Optional[float]):
+            nonlocal last_pct, last_log_t
+            try:
+                # Honor user stop quickly: raise InterruptedError to unwind stack
+                if job_manager.is_stop_requested(job_id):
+                    raise InterruptedError(f"Stop requested during transcription progress callback for job {job_id}")
+                # Map ratio [0,1] to progress markers; fallback to incremental if ratio unknown
+                if isinstance(ratio, float) and 0.0 <= ratio <= 1.0:
+                    pct = start_marker + int(ratio * (end_marker - start_marker))
+                else:
+                    pct = min(end_marker - 1, last_pct + 1)
+                pct = max(last_pct, min(pct, end_marker - 1))
+                now = time.time()
+                # Throttle updates: every 3% or 5s
+                if (pct - last_pct) >= 3 or (now - last_log_t) >= 5.0:
+                    job_manager.update_progress(job_id, pct)
+                    job_manager.add_log(job_id, f"Transcribing… ~{pct}% (processed ~{int(processed_sec)}s)", "INFO")
+                    last_pct = pct
+                    last_log_t = now
+            except InterruptedError:
+                # Bubble up to abort transcription quickly
+                raise
+            except Exception:
+                # Non-fatal issues in progress reporting should not break processing
+                pass
+
         intermediate_segments = transcribe_and_diarize(
             input_audio_path=input_audio_abs_path,
             whisper_model_size=whisper_model,
@@ -143,7 +185,8 @@ def run_part1(job_id: str, config_overrides: Dict[str, Any]):
             language=language,
             hf_token=hf_token,
             pyannote_pipeline_name=pyannote_pipeline,
-            word_timestamps_enabled=word_timestamps_enabled
+            word_timestamps_enabled=word_timestamps_enabled,
+            progress_callback=_progress_cb
         )
         print(f"--- PRINT DEBUG (pipeline_part1): Returned from transcribe_and_diarize for job {job_id} ---", flush=True)
 

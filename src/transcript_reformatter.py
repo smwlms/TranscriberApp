@@ -126,11 +126,25 @@ def format_transcript_html(transcript_segments: List[Dict[str, Any]]) -> str:
         .segment-text {
             /* Text takes remaining space */
         }
+        .word { cursor: pointer; padding: 0 1px; }
+        .word:hover { background: #e2e8f0; }
         /* Basic responsive adjustment */
         @media (max-width: 600px) {
             body { margin: 0.5em; }
             .transcript-container { padding: 1em; }
             .timestamp { width: 60px; margin-right: 0.5em; }
+        }
+
+        /* Dark mode (auto via system preference) */
+        @media (prefers-color-scheme: dark) {
+          body { background-color: #0f172a; color: #e5e7eb; }
+          .transcript-container { background-color: #0b1220; color: #e5e7eb; border-color: #1f2937; }
+          h2 { color: #d1d5db; border-color: #374151; }
+          .speaker-name { color: #93c5fd; }
+          .timestamp { color: #9ca3af; }
+          .segment-text { color: #e5e7eb; }
+          .speaker-block { border-bottom-color: #1f2937; }
+          .word:hover { background: #1f2937; }
         }
     </style>
 </head>
@@ -166,9 +180,27 @@ def format_transcript_html(transcript_segments: List[Dict[str, Any]]) -> str:
         # Create a div for the segment row (timestamp + text)
         html_parts.append(f'<div class="segment">')
         html_parts.append(f'<span class="timestamp">{timestamp_str}</span>')
-        # Replace escaped newline characters with HTML <br> tags for display
-        safe_text_with_breaks = safe_text.replace('\n', '<br>')
-        html_parts.append(f'<span class="segment-text">{safe_text_with_breaks}</span>')
+        # If per-word timestamps exist, render clickable word spans; otherwise use plain text
+        words = segment.get('words')
+        if isinstance(words, list) and words:
+            word_spans = []
+            for w in words:
+                try:
+                    w_text = html.escape(str(w.get('word', '')), quote=True)
+                    w_start = w.get('start'); w_end = w.get('end')
+                    ds = f"{float(w_start):.3f}" if isinstance(w_start, (int, float)) else ""
+                    de = f"{float(w_end):.3f}" if isinstance(w_end, (int, float)) else ""
+                    title = f"{ds}-{de}" if ds and de else ""
+                    word_spans.append(
+                        f'<span class="word" data-start="{ds}" data-end="{de}" title="{title}">{w_text}</span>'
+                    )
+                except Exception:
+                    word_spans.append(html.escape(str(w), quote=True))
+            html_parts.append(f'<span class="segment-text">' + ' '.join(word_spans) + '</span>')
+        else:
+            # Replace escaped newline characters with HTML <br> tags for display
+            safe_text_with_breaks = safe_text.replace('\\n', '<br>')
+            html_parts.append(f'<span class="segment-text">{safe_text_with_breaks}</span>')
         html_parts.append('</div>') # Close segment div
 
     # --- Final HTML Cleanup ---

@@ -10,34 +10,20 @@ intermediate_transcript_path: transcripts/intermediate_transcript.json
 llm_models:
   summary:
   - llama3:8b
-  - mistral:7b
-  - phi3:medium
   intent:
   - mistral:7b
-  - llama3:8b
-  - phi3:medium
   actions:
   - llama3:8b
-  - phi3:medium
-  - mistral:7b
   emotion:
   - phi3:medium
-  - llama3:8b
-  - mistral:7b
   questions:
   - llama3:8b
-  - qwen2:7b
-  - phi3:medium
   legal:
   - llama3:8b
-  - phi3:medium
-  - mistral:7b
   name_detection:
   - llama3:8b
-  - mistral:7b
   final:
   - llama3:8b
-  - phi3:medium
 extra_context_prompt: ''
 llm_default_timeout: null
 llm_final_analysis_timeout: null

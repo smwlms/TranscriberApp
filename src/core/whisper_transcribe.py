@@ -3,7 +3,7 @@
 import time
 import traceback
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Callable
 
 # --- Third-party library imports ---
 try:
@@ -22,7 +22,8 @@ def run_transcription(
     whisper_model: WhisperModel,
     wav_path: Path,
     language: Optional[str],
-    word_timestamps_enabled: bool
+    word_timestamps_enabled: bool,
+    progress_callback: Optional[Callable[[float, Optional[float]], None]] = None
     ) -> Optional[Tuple[List[WhisperSegmentObject], dict]]: # Return segments and info dict
     """
     Runs Whisper transcription on the provided WAV audio file.
@@ -59,9 +60,36 @@ def run_transcription(
             # temperature=0.0,           # Control randomness (0=deterministic)
         )
 
-        # Consume the generator to get the list of segment objects
-        whisper_results: List[WhisperSegmentObject] = list(segments_generator)
+        # Consume the generator and report periodic progress
+        whisper_results: List[WhisperSegmentObject] = []
+        last_report = time.time()
+        total_dur = None
+        try:
+            total_dur = float(getattr(info, 'duration', 0.0)) if info else None
+        except Exception:
+            total_dur = None
+
+        for seg in segments_generator:
+            whisper_results.append(seg)
+            # Periodic progress callback (every ~2s)
+            if progress_callback and (time.time() - last_report) >= 0.5:
+                processed = float(getattr(seg, 'end', 0.0)) or 0.0
+                ratio = None
+                if total_dur and total_dur > 0:
+                    ratio = max(0.0, min(processed / total_dur, 0.999))
+                # Allow callback to raise InterruptedError for quick stop
+                progress_callback(processed, ratio)
+                last_report = time.time()
         elapsed = round(time.time() - start_time, 2)
+
+        # Final progress callback at completion
+        if progress_callback:
+            try:
+                processed_final = float(getattr(whisper_results[-1], 'end', 0.0)) if whisper_results else 0.0
+                ratio_final = 1.0 if (total_dur and total_dur > 0) else None
+                progress_callback(processed_final, ratio_final)
+            except Exception:
+                pass
 
         # Log transcription results
         log(f"Transcription completed in {elapsed}s. Found {len(whisper_results)} segments.", "SUCCESS")
@@ -80,6 +108,10 @@ def run_transcription(
         # Return both the list of segments and the info dictionary
         return whisper_results, info if info else {} # Return empty dict if info is None
 
+    except InterruptedError as e:
+        # Propagate planned stop so pipeline can mark STOPPED quickly
+        log(f"Transcription interrupted by stop request: {e}", "INFO")
+        raise
     except Exception as e:
         log(f"Transcription step failed for '{wav_path.name}': {e}", "ERROR")
         log(traceback.format_exc(), "DEBUG")

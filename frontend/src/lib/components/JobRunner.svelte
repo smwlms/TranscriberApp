@@ -41,8 +41,16 @@
 
   $: canStart = $currentJob.relative_audio_path &&
     (!$currentJob.job_id || isTerminal($currentJob.status));
-  $: canStop = $currentJob.job_id && !isTerminal($currentJob.status);
+  $: canStop = $currentJob.job_id && !isTerminal($currentJob.status) && !$currentJob.stop_requested;
   $: isReviewing = $currentJob.status === 'WAITING_FOR_REVIEW';
+  let reviewOpen = false;
+
+  $: {
+    // Open dialog automatically when entering WAITING_FOR_REVIEW
+    if (isReviewing && !reviewOpen) reviewOpen = true;
+    // Ensure it closes when leaving review state
+    if (!isReviewing && reviewOpen) reviewOpen = false;
+  }
 
   $: {
     if (isReviewing) {
@@ -158,12 +166,24 @@
     log('Stopped polling for job:', $currentJob.job_id);
   }
 
+  function newRun() {
+    // Reset job state but keep selected audio and overrides
+    const keepPath = $currentJob.relative_audio_path;
+    log('Resetting UI for a new run. Keeping audio path:', keepPath);
+    currentJob.reset();
+    if (keepPath) currentJob.patch({ relative_audio_path: keepPath });
+    // polling is already cleared on reset via reactivity, but ensure stopped
+    stopPolling();
+  }
+
   async function handleReviewSubmit(event) {
     const finalMap = event.detail;
     log('ReviewDialog submitted. Attempting to update review data for job:', $currentJob.job_id, 'with map:', finalMap);
     try {
       await updateReviewData($currentJob.job_id, finalMap);
       log('Review data successfully submitted to backend for job:', $currentJob.job_id, '. Backend will continue pipeline.');
+      // Optimistically close the dialog immediately to avoid double-submit
+      currentJob.patch({ status: 'REVIEW_SUBMITTED' });
       log('Explicitly restarting polling to detect status change after review submission for job:', $currentJob.job_id);
       if (pollInterval) {
           log('handleReviewSubmit: Stopping existing poll interval before restarting.');
@@ -172,14 +192,28 @@
       startPolling();
     } catch (e) {
       err('Review submission API call failed for job:', $currentJob.job_id, e);
-      currentJob.patch({
-        error_message: `Review submit failed: ${e.message}`
-      });
+      // If backend already advanced (409), close the dialog and resume polling
+      if (e && (e.status === 409)) {
+        log('Review already processed on backend (409). Closing dialog and resuming polling.');
+        currentJob.patch({ status: 'REVIEW_SUBMITTED' });
+        if (pollInterval) stopPolling();
+        startPolling();
+        return;
+      }
+      currentJob.patch({ error_message: `Review submit failed: ${e.message}` });
     }
   }
 
-  function handleReviewCancel() {
-    log('Review cancelled by user for job:', $currentJob.job_id, '. Status remains WAITING_FOR_REVIEW. Polling remains stopped.');
+  import { logClientEvent } from '../api.js';
+
+  async function handleReviewCancel() {
+    log('Review cancelled by user for job:', $currentJob.job_id, '. Status remains WAITING_FOR_REVIEW.');
+    reviewOpen = false; // close the dialog locally while staying in review state
+    try {
+      if ($currentJob.job_id) await logClientEvent($currentJob.job_id, 'Review dialog cancelled by user');
+    } catch (e) {
+      err('Failed to log client cancel event:', e);
+    }
   }
 
   onDestroy(() => {
@@ -209,6 +243,13 @@
       class="px-5 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 transition-colors dark:bg-red-500 dark:hover:bg-red-600"
     >
       Stop Pipeline
+    </button>
+    <button
+      on:click={newRun}
+      class="px-5 py-2 bg-slate-500 text-white rounded-md hover:bg-slate-600 transition-colors dark:bg-slate-600 dark:hover:bg-slate-500"
+      title="Reset de UI en start een nieuwe run zonder reload (behoudt geüploade audio en instellingen)"
+    >
+      New Run
     </button>
   </div>
 
@@ -259,7 +300,7 @@
     </div>
   {/if}
 
-  {#if isReviewing} <ReviewDialog
+  {#if isReviewing && reviewOpen} <ReviewDialog
       jobId={$currentJob.job_id}
       audioRelativePath={$currentJob.relative_audio_path}
       on:submit={handleReviewSubmit}
@@ -269,7 +310,17 @@
 
   {#if $currentJob.status === 'COMPLETED'}
     <ResultViewer
-      htmlPath="results/transcript.html" summaryPath="results/summary.txt"
+      htmlPath="results/transcript.html"
+      summaryPath="results/summary.txt"
+      advancedPath="results/advanced_analysis.json"
+      jobId={$currentJob.job_id}
+      audioRelativePath={$currentJob.relative_audio_path}
+      on:rerun={() => { 
+        // Reset local UI state and resume polling for re-analysis
+        if (pollInterval) stopPolling();
+        currentJob.patch({ status: 'ANALYZING', progress: 0 });
+        startPolling();
+      }}
     />
   {/if}
 </div>

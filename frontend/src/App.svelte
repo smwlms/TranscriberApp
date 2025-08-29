@@ -18,6 +18,7 @@
   import AudioUpload     from './lib/components/AudioUpload.svelte';
   import ConfigForm      from './lib/components/ConfigForm.svelte';
   import JobRunner       from './lib/components/JobRunner.svelte';
+  import HealthIndicator from './lib/components/HealthIndicator.svelte';
 
   // --- Local state ---
   let errorLoadingConfig = null;
@@ -62,7 +63,10 @@
     <h1 class="text-2xl sm:text-3xl font-bold text-indigo-700 dark:text-indigo-400">
       Transcriber App
     </h1>
-    <ThemeToggle />
+    <div class="flex items-center gap-3">
+      <HealthIndicator />
+      <ThemeToggle />
+    </div>
   </div>
 
   {#if errorLoadingConfig}

@@ -1,12 +1,15 @@
 # File: src/routes/info_routes.py
 
 import traceback
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 
 # --- Utility and App Logic Imports ---
 from src.utils.log import log
 from src.utils.config_schema import parse_schema_for_ui # Keep this import
 from src.utils.llm import get_local_models             # Keep this import
+from src.utils.config_schema import PROJECT_ROOT
+from src.constants import AUDIO_FOLDER_NAME, RESULTS_FOLDER_NAME, TRANSCRIPTS_FOLDER_NAME
+from src.database_logger import initialize_database, get_db_path
 
 # *** CORRECTED IMPORT for compute device ***
 # Import the renamed function from the correct location in core module
@@ -91,5 +94,82 @@ def get_config_info_route():
         status_code = 500
 
     return jsonify(response_data), status_code
+
+
+@info_bp.route("/healthz", methods=["GET"])
+def healthz_route():
+    """
+    Lightweight health endpoint.
+    - liveness: server reachable
+    - readiness: schema parse, folder write perms, DB init
+    Optional query `deep=true` adds an Ollama/models check and device detect.
+    """
+    deep = str(request.args.get("deep", "false")).lower() in ("1", "true", "yes", "y")
+
+    checks = {}
+    status = "ok"
+
+    # 1) Schema parse
+    try:
+        _s = parse_schema_for_ui()
+        checks["schema"] = bool(_s)
+        if not _s:
+            status = "degraded"
+    except Exception as e:
+        log(f"/healthz: schema parse error: {e}", "ERROR")
+        checks["schema"] = False
+        status = "error"
+
+    # 2) Folders writable
+    def _writable(rel_name):
+        try:
+            p = (PROJECT_ROOT / rel_name).resolve()
+            p.mkdir(parents=True, exist_ok=True)
+            test = p / ".healthz.tmp"
+            with open(test, "w", encoding="utf-8") as f:
+                f.write("ok")
+            test.unlink(missing_ok=True)
+            return True
+        except Exception as we:
+            log(f"/healthz: write test failed for {rel_name}: {we}", "ERROR")
+            return False
+
+    checks["audio_writable"] = _writable(AUDIO_FOLDER_NAME)
+    checks["results_writable"] = _writable(RESULTS_FOLDER_NAME)
+    checks["transcripts_writable"] = _writable(TRANSCRIPTS_FOLDER_NAME)
+    if not all((checks["audio_writable"], checks["results_writable"], checks["transcripts_writable"])):
+        status = "degraded" if status == "ok" else status
+
+    # 3) DB readiness
+    try:
+        db_ok = initialize_database(get_db_path())
+        checks["database_ready"] = bool(db_ok)
+        if not db_ok:
+            status = "degraded" if status == "ok" else status
+    except Exception as dbe:
+        log(f"/healthz: DB init error: {dbe}", "ERROR")
+        checks["database_ready"] = False
+        status = "error"
+
+    # 4) Optional deep check: available models + device
+    if deep:
+        try:
+            checks["available_models_count"] = len(get_local_models() or [])
+        except Exception as me:
+            log(f"/healthz: model discovery failed: {me}", "WARNING")
+            checks["available_models_count"] = 0
+            status = "degraded" if status == "ok" else status
+        try:
+            dev = get_compute_device() if DEVICE_DETECTION_AVAILABLE else "unknown"
+            checks["device"] = dev
+        except Exception as de:
+            log(f"/healthz: device detection failed: {de}", "WARNING")
+            checks["device"] = "error"
+            status = "degraded" if status == "ok" else status
+
+    return jsonify({
+        "status": status,
+        "checks": checks
+    }), 200 if status in ("ok", "degraded") else 500
 
 # --- End of src/routes/info_routes.py ---

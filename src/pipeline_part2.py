@@ -185,12 +185,16 @@ def _prepare_text_for_llm(final_transcript_json_path_abs: Optional[Path], job_id
     Loads the final transcript JSON and formats the text for LLM analysis.
     """
     if not final_transcript_json_path_abs or not final_transcript_json_path_abs.is_file():
-         log(f"Final transcript JSON file not found at {final_transcript_json_path_abs} for job {job_id}. Cannot prepare text for LLM.", "ERROR", job_id=job_id)
-         return None
+        log(
+            f"Final transcript JSON file not found at {final_transcript_json_path_abs} for job {job_id}. Cannot prepare text for LLM.",
+            "ERROR",
+            job_id=job_id,
+        )
+        return None
     try:
         log(f"Loading text from {final_transcript_json_path_abs.name} for LLM analysis (job {job_id})...", "DEBUG", job_id=job_id)
         with open(final_transcript_json_path_abs, "r", encoding='utf-8') as f:
-             loaded_final_segments_for_text = json.load(f)
+            loaded_final_segments_for_text = json.load(f)
         if not isinstance(loaded_final_segments_for_text, list):
              raise ValueError(f"Invalid format in final transcript JSON (expected list) for job {job_id}.")
         text_lines = [
@@ -199,14 +203,22 @@ def _prepare_text_for_llm(final_transcript_json_path_abs: Optional[Path], job_id
         ]
         analysis_input_text = "\n".join(text_lines).strip()
         if not analysis_input_text:
-             log(f"No text content found in final transcript JSON for job {job_id}. Skipping LLM analysis.", "WARNING", job_id=job_id)
-             return None
+            log(
+                f"No text content found in final transcript JSON for job {job_id}. Skipping LLM analysis.",
+                "WARNING",
+                job_id=job_id,
+            )
+            return None
         log(f"Prepared text input for LLM analysis ({len(analysis_input_text)} chars) for job {job_id}.", "DEBUG", job_id=job_id)
         return analysis_input_text
     except Exception as e:
-         log(f"Unexpected error loading/preparing text from final transcript '{final_transcript_json_path_abs.name}' for job {job_id}: {e}. Skipping LLM.", "ERROR", job_id=job_id)
-         log(traceback.format_exc(), "DEBUG", job_id=job_id)
-         return None
+        log(
+            f"Unexpected error loading/preparing text from final transcript '{final_transcript_json_path_abs.name}' for job {job_id}: {e}. Skipping LLM.",
+            "ERROR",
+            job_id=job_id,
+        )
+        log(traceback.format_exc(), "DEBUG", job_id=job_id)
+        return None
 
 # --- Helper Function: Run LLM Analysis Steps ---
 def _run_llm_analysis_step(
@@ -318,6 +330,57 @@ def _run_llm_analysis_step(
     except Exception as e: # Catch errors during the overall LLM analysis phase
          # This includes directory creation or unhandled issues in mode logic
          raise RuntimeError(f"LLM analysis phase for job {job_id} encountered an error: {e}") from e
+
+
+# --- New: Run only the LLM analysis using existing or provided final transcript ---
+def run_analysis_only(job_id: str, transcript_override_rel: Optional[Path] = None) -> None:
+    """Re-runs only the analysis step for a completed job.
+
+    If `transcript_override_rel` is provided (relative to PROJECT_ROOT), it is used
+    as the source for final_transcript.json (and will overwrite the default file).
+    Otherwise, uses transcripts/final_transcript.json already on disk.
+    """
+    try:
+        job_config, _, _ = _prepare_part2(job_id)  # gets config and validates intermediate path, but we won't use it further here
+    except Exception as e:
+        log(f"run_analysis_only: Could not prepare Part 2 for job {job_id}: {e}", "ERROR", job_id=job_id)
+        raise
+
+    final_transcript_path_abs = (PROJECT_ROOT / TRANSCRIPTS_FOLDER_NAME / FINAL_TRANSCRIPT_JSON_FILENAME).resolve()
+    if transcript_override_rel:
+        try:
+            # Write override JSON into final_transcript.json
+            override_abs = (PROJECT_ROOT / transcript_override_rel).resolve()
+            with open(override_abs, "r", encoding='utf-8') as f:
+                override_data = json.load(f)
+            final_transcript_path_abs.parent.mkdir(parents=True, exist_ok=True)
+            with open(final_transcript_path_abs, "w", encoding='utf-8') as f:
+                json.dump(override_data, f, ensure_ascii=False, indent=2)
+            log(f"run_analysis_only: Overwrote final_transcript.json from {override_abs.name} for job {job_id}", "INFO", job_id=job_id)
+        except Exception as e:
+            log(f"run_analysis_only: Failed to apply transcript override for job {job_id}: {e}", "ERROR", job_id=job_id)
+            raise
+
+    analysis_text = _prepare_text_for_llm(final_transcript_path_abs, job_id)
+    if not analysis_text:
+        raise RuntimeError(f"run_analysis_only: No analysis text available for job {job_id}")
+
+    summary_result, advanced_results, summary_path_abs, advanced_json_path_abs = _run_llm_analysis_step(
+        analysis_text, job_config, job_id
+    )
+
+    # Finalize job state
+    try:
+        job_manager.update_progress(job_id, PROGRESS_AFTER_ANALYSIS)
+        job_manager.set_result(job_id, {
+            "summary_path": str(summary_path_abs.relative_to(PROJECT_ROOT)) if summary_path_abs else None,
+            "advanced_analysis_path": str(advanced_json_path_abs.relative_to(PROJECT_ROOT)) if advanced_json_path_abs else None,
+        })
+        job_manager.update_status(job_id, STATUS_COMPLETED)
+        log(f"run_analysis_only: Completed re-analysis for job {job_id}.", "SUCCESS", job_id=job_id)
+    except Exception as e:
+        log(f"run_analysis_only: Failed to finalize job {job_id}: {e}", "ERROR", job_id=job_id)
+        raise
 
 # --- Helper Function: Finalize Job Results ---
 def _finalize_job_results(
