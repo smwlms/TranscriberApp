@@ -15,7 +15,6 @@ from typing import Any, Dict, List
 from flask import Blueprint, abort, jsonify, request
 
 from src.job_manager import STATUS_WAITING_FOR_REVIEW, job_manager
-from src.pipeline_part2 import run_part2
 from src.utils.config_schema import PROJECT_ROOT
 from src.utils.log import log
 
@@ -197,15 +196,29 @@ def update_review_data(job_id: str):
 
     body = request.get_json()
     final_map = body.get("final_speaker_map")
-
     if not isinstance(final_map, dict):
-        log(f"API: POST /update_review_data - 'final_speaker_map' ontbreekt of is geen object in request body voor job {job_id}. Afbreken.", "ERROR")
-        return jsonify(error="'final_speaker_map' ontbreekt of is geen object"), 400
+        # Backwards compatible alias
+        alt_map = body.get("speaker_map")
+        if isinstance(alt_map, dict):
+            final_map = alt_map
+        else:
+            log(f"API: POST /update_review_data - 'final_speaker_map'/'speaker_map' ontbreekt of is ongeldig voor job {job_id}.", "ERROR")
+            return jsonify(error="'final_speaker_map' ontbreekt of is geen object"), 400
 
     log(f"API: POST /update_review_data - GEACCEPTEERD. Job {job_id} status is correct. Final map: {final_map}. Starten van Part 2 in thread.", "INFO")
 
     # Start Part 2 in een aparte thread
     # Het is belangrijk dat run_part2 de status van de job direct update (bv. naar ANALYZING)
+    try:
+        # Lazy import to avoid heavy deps at app startup
+        from src.pipeline_part2 import run_part2  # noqa: WPS433 (local import intentional)
+    except Exception as e:
+        log(f"Import error for pipeline_part2: {e}", "ERROR")
+        return jsonify({
+            "error": "Pipeline Part 2 dependencies missing",
+            "message": "Install full requirements to run Part 2 (pip install -r requirements.txt or make install)."
+        }), 500
+
     try:
         threading.Thread(
             target=lambda: run_part2(job_id, final_map), # Zorg dat final_map correct wordt doorgegeven
@@ -214,8 +227,6 @@ def update_review_data(job_id: str):
         ).start()
     except Exception as e:
         log(f"API: POST /update_review_data - Kon Part 2 thread niet starten voor job {job_id}: {e}", "CRITICAL")
-        # Hier zou je kunnen overwegen de jobstatus naar een FAILED state te zetten
-        # job_manager.set_status(job_id, "PART2_START_FAILED", error_message=str(e))
         return jsonify(error=f"Kon Part 2 van de pipeline niet starten: {e}"), 500
 
 

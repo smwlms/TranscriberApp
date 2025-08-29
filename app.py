@@ -8,6 +8,7 @@ from pathlib import Path
 from flask import Flask, jsonify, request # request is gebruikt in before_request en save_transcription_adjustment
 from flask_cors import CORS, cross_origin # cross_origin is specifiek gebruikt op één route
 from dotenv import load_dotenv
+from werkzeug.utils import secure_filename
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Initialisatie & logging
@@ -19,7 +20,8 @@ from src.utils.log import setup_logging, log
 from src.utils.config_schema import parse_schema_for_ui, PROJECT_ROOT
 from src.utils.load_config import load_config # Wordt niet direct gebruikt in app.py, maar waarschijnlijk in andere modules
 from src.database_logger import initialize_database
-from src.constants import AUDIO_FOLDER_NAME, RESULTS_FOLDER_NAME 
+from src.constants import AUDIO_FOLDER_NAME, RESULTS_FOLDER_NAME, TRANSCRIPTS_FOLDER_NAME 
+from src.transcript_reformatter import format_transcript_html
 
 # Roep setup_logging zo vroeg mogelijk aan
 # setup_logging() # JE HAD DIT HIER AL, IS GOED
@@ -114,18 +116,30 @@ log(f"CORS geconfigureerd voor origins: {cors_origins_list}", "INFO")
 # Definieer paden met Path objecten voor consistentie
 UPLOAD_FOLDER_PATH = PROJECT_ROOT / AUDIO_FOLDER_NAME
 RESULTS_FOLDER_PATH = PROJECT_ROOT / RESULTS_FOLDER_NAME
+TRANSCRIPTS_FOLDER_PATH = PROJECT_ROOT / TRANSCRIPTS_FOLDER_NAME
 
 try:
     UPLOAD_FOLDER_PATH.mkdir(parents=True, exist_ok=True)
     RESULTS_FOLDER_PATH.mkdir(parents=True, exist_ok=True)
+    TRANSCRIPTS_FOLDER_PATH.mkdir(parents=True, exist_ok=True)
 except OSError as e:
     log(f"Kritieke fout bij aanmaken mappen: {e}", "CRITICAL")
     sys.exit(1)
 
 app.config['UPLOAD_FOLDER'] = str(UPLOAD_FOLDER_PATH)
 app.config['RESULTS_FOLDER'] = str(RESULTS_FOLDER_PATH)
+app.config['TRANSCRIPTS_FOLDER'] = str(TRANSCRIPTS_FOLDER_PATH)
 log(f"Upload folder ingesteld: {app.config['UPLOAD_FOLDER']}", "INFO")
 log(f"Results folder ingesteld: {app.config['RESULTS_FOLDER']}", "INFO")
+log(f"Transcripts folder ingesteld: {app.config['TRANSCRIPTS_FOLDER']}", "INFO")
+
+# Snelle schrijfrechten-check voor belangrijke directories
+for p in (UPLOAD_FOLDER_PATH, RESULTS_FOLDER_PATH, TRANSCRIPTS_FOLDER_PATH):
+    try:
+        if not os.access(p, os.W_OK):
+            log(f"LET OP: Geen schrijfrechten op map: {p}", "WARNING")
+    except Exception:
+        pass
 
 try:
     schema = parse_schema_for_ui()
@@ -182,6 +196,12 @@ def log_request_info_detailed(): # Naam veranderd voor duidelijkheid
             payload_summary = "Error parsing JSON payload"
     elif request.form:
         payload_summary = f"Form keys: {list(request.form.keys())}"
+    elif request.files:
+        try:
+            file_keys = list(request.files.keys())
+            payload_summary = f"File upload fields: {file_keys}"
+        except Exception:
+            payload_summary = "File upload present"
     elif request.data:
         payload_summary = f"Raw data: {len(request.data)} bytes"
 
@@ -203,8 +223,78 @@ def health_check():
 @app.route(f"{API_PREFIX}/transcriptions/<string:file_id>/adjust", methods=["POST", "OPTIONS"])
 # @cross_origin(...) # Waarschijnlijk niet nodig als globale CORS goed is ingesteld
 def save_transcription_adjustment(file_id):
-    # ... (code blijft hetzelfde) ...
-    pass # Placeholder om de structuur te behouden
+    """
+    Slaat een losse transcript-aanpassing op.
+
+    Body (application/json):
+      - { "text": "..." }  -> schrijft results/<file_id>.txt (append met {"append":true})
+      - { "transcript": [ ... ] } -> schrijft transcripts/<file_id>.json en results/<file_id>.html
+      - Beide mogen tegelijk; beide outputs worden dan geschreven.
+    """
+    if request.method == "OPTIONS":
+        return "", 204
+
+    if not request.is_json:
+        return jsonify(error="Content-Type moet application/json zijn"), 415
+
+    data = request.get_json(silent=True) or {}
+    safe_id = secure_filename(file_id)
+    if not safe_id:
+        return jsonify(error="Ongeldige file_id"), 400
+    if safe_id != file_id:
+        log(f"Adjusted unsafe file_id '{file_id}' -> '{safe_id}'", "WARNING")
+
+    saved, urls = {}, {}
+
+    # 1) TXT export
+    text_val = data.get("text")
+    append_mode = bool(data.get("append", False))
+    if isinstance(text_val, str):
+        try:
+            txt_path = RESULTS_FOLDER_PATH / f"{safe_id}.txt"
+            RESULTS_FOLDER_PATH.mkdir(parents=True, exist_ok=True)
+            with open(txt_path, "a" if append_mode else "w", encoding="utf-8") as f:
+                f.write(text_val)
+                if append_mode and not text_val.endswith("\n"):
+                    f.write("\n")
+            rel = str(Path(RESULTS_FOLDER_NAME) / txt_path.name)
+            saved["txt"] = rel
+            urls["txt"] = f"/{rel}"
+            log(f"TXT export opgeslagen: {txt_path}", "SUCCESS")
+        except Exception as e:
+            log(f"Kon TXT niet opslaan voor '{safe_id}': {e}", "ERROR")
+            return jsonify(error="Kon TXT niet opslaan", details=str(e)), 500
+
+    # 2) Transcript JSON + HTML
+    transcript_val = data.get("transcript")
+    if isinstance(transcript_val, list):
+        try:
+            # JSON
+            json_path = TRANSCRIPTS_FOLDER_PATH / f"{safe_id}.json"
+            TRANSCRIPTS_FOLDER_PATH.mkdir(parents=True, exist_ok=True)
+            import json as _json
+            with open(json_path, "w", encoding="utf-8") as f:
+                _json.dump(transcript_val, f, indent=2, ensure_ascii=False)
+            saved["json"] = str(Path(TRANSCRIPTS_FOLDER_NAME) / json_path.name)
+            log(f"Transcript JSON opgeslagen: {json_path}", "SUCCESS")
+
+            # HTML
+            html_str = format_transcript_html(transcript_val)
+            html_path = RESULTS_FOLDER_PATH / f"{safe_id}.html"
+            with open(html_path, "w", encoding="utf-8") as f:
+                f.write(html_str)
+            rel_html = str(Path(RESULTS_FOLDER_NAME) / html_path.name)
+            saved["html"] = rel_html
+            urls["html"] = f"/{rel_html}"
+            log(f"Transcript HTML opgeslagen: {html_path}", "SUCCESS")
+        except Exception as e:
+            log(f"Kon transcript outputs niet opslaan voor '{safe_id}': {e}", "ERROR")
+            return jsonify(error="Kon transcript outputs niet opslaan", details=str(e)), 500
+
+    if not saved:
+        return jsonify(error="Geen geldige velden in body. Gebruik 'text' (string) of 'transcript' (lijst)."), 400
+
+    return jsonify(message="Aanpassingen opgeslagen", file_id=safe_id, saved_paths=saved, download_urls=urls), 200
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Error‑handlers

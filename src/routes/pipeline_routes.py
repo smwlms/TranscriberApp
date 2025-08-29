@@ -7,8 +7,6 @@ from flask import Blueprint, request, jsonify, abort, current_app
 from werkzeug.utils import secure_filename
 
 from src.job_manager import job_manager
-from src.pipeline_part1 import run_part1
-from src.pipeline_part2 import run_part2
 from src.constants import (
     STATUS_WAITING_FOR_REVIEW,
     STATUS_MAPPING_SPEAKERS,
@@ -29,6 +27,15 @@ pipeline_bp = Blueprint('pipeline', __name__)
 @pipeline_bp.route("/start_pipeline", methods=["POST"])
 def start_pipeline_route():
     log("API: Request received for /start_pipeline", "INFO")
+    # Lazy import to avoid heavy dependencies at app startup
+    try:
+        from src.pipeline_part1 import run_part1  # noqa: WPS433 (local import intentional)
+    except Exception as e:
+        log(f"Import error for pipeline_part1 (likely missing heavy deps like torch): {e}", "ERROR")
+        return jsonify({
+            "error": "Pipeline dependencies missing",
+            "message": "Install full requirements to run the pipeline (pip install -r requirements.txt or make install)."
+        }), 500
     if not request.form:
         return jsonify({"error": "Missing form data"}), 400
 
@@ -109,43 +116,6 @@ def stop_pipeline_route(job_id):
             return jsonify({"message": f"Cannot stop job in status {data.get('status')}."}), 409
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-#   HIER START DE NIEUWE ROUTE VOOR HET OPSLAAN VAN DE GEREVIEWDE SPEAKER-MAP
-# ──────────────────────────────────────────────────────────────────────────────
-@pipeline_bp.route("/update_review_data/<string:job_id>", methods=["POST"])
-def update_review_data(job_id):
-    """
-    Krijgt de door de gebruiker gecorrigeerde speaker-map,
-    valideert dat de job nog in REVIEW_FASE zit,
-    zet status op MAPPING_SPEAKERS en start Part 2.
-    """
-    payload = request.get_json(force=True)
-    final_map: Dict[str, Optional[str]] = payload.get("speaker_map", {})
-
-    job = job_manager.get_status(job_id)
-    if not job:
-        abort(404, description=f"Job '{job_id}' not found.")
-    if job.get("status") != STATUS_WAITING_FOR_REVIEW:
-        # conflict: mag alleen als we écht in de review-fase zitten
-        return jsonify({
-            "current_status": job.get("status"),
-            "error": "Job staat niet in review-fase"
-        }), 409
-
-    log(f"API: Review update ontvangen voor job {job_id}", "INFO")
-    # update de job state: geef de speaker_map en ga naar mapping-fase
-    job_manager._update_job_state(job_id, {
-        "status": STATUS_MAPPING_SPEAKERS,
-        "progress": PROGRESS_AFTER_MAPPING,
-        "final_speaker_map": final_map
-    })
-
-    # start Part 2 async
-    t2 = threading.Thread(
-        target=lambda: run_part2(job_id, final_map),
-        daemon=True
-    )
-    t2.start()
-    log(f"API: Pipeline deel 2 gestart voor job {job_id}", "INFO")
-
-    return "", 202
+# Let op: de route voor het opslaan van de gereviewde speaker‑map
+# staat in review_routes.py onder hetzelfde pad
+# Route verplaatst: zie src/routes/review_routes.py

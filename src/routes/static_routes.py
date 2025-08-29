@@ -14,22 +14,14 @@ from werkzeug.utils import secure_filename
 
 # --- Import Constants ---
 # BELANGRIJK: Zorg ervoor dat deze constanten gedefinieerd zijn in src/constants.py
-try:
-    # GECORRIGEERDE IMPORT: Voeg STATIC_FOLDER_NAME toe
-    from src.constants import UPLOAD_FOLDER_NAME, RESULTS_FOLDER_NAME, STATIC_FOLDER_NAME
-except ImportError:
-    # Fallback/Error if constants are not defined. Should ideally be caught by config/setup.
-    log("CRITICAL: Could not import folder names from src.constants. Static file serving may fail.", "CRITICAL")
-    UPLOAD_FOLDER_NAME = "audio" # Fallback to default name
-    RESULTS_FOLDER_NAME = "results" # Fallback to default name
-    STATIC_FOLDER_NAME = "static" # Fallback to default name
+from src.constants import AUDIO_FOLDER_NAME, RESULTS_FOLDER_NAME, STATIC_FOLDER_NAME, TRANSCRIPTS_FOLDER_NAME
 
 
 # --- Define Base Directories ---
 # Use constants for directory names
-UPLOAD_FOLDER = PROJECT_ROOT / UPLOAD_FOLDER_NAME
 RESULTS_FOLDER = PROJECT_ROOT / RESULTS_FOLDER_NAME
 STATIC_FOLDER = PROJECT_ROOT / STATIC_FOLDER_NAME # <-- Definieer STATIC_FOLDER
+AUDIO_FOLDER = PROJECT_ROOT / AUDIO_FOLDER_NAME
 
 
 # --- Define the Blueprint for Static Files ---
@@ -85,7 +77,7 @@ def download_result_file(filename):
     return _safe_send_from_project_subdir(RESULTS_FOLDER_NAME, filename, as_attachment=True)
 
 
-@static_files_bp.route(f"/{UPLOAD_FOLDER_NAME}/<path:filename>")
+@static_files_bp.route(f"/{AUDIO_FOLDER_NAME}/<path:filename>")
 def serve_audio_file(filename):
     """
     Endpoint to allow accessing original uploaded audio files.
@@ -93,7 +85,16 @@ def serve_audio_file(filename):
     Allows browser to play/handle inline by default.
     """
     log(f"Static Route: Request to serve audio file: {filename}", "INFO")
-    return _safe_send_from_project_subdir(UPLOAD_FOLDER_NAME, filename, as_attachment=False)
+    return _safe_send_from_project_subdir(AUDIO_FOLDER_NAME, filename, as_attachment=False)
+
+
+@static_files_bp.route(f"/{TRANSCRIPTS_FOLDER_NAME}/<path:filename>")
+def serve_transcript_json(filename):
+    """
+    Endpoint om transcript JSON-bestanden te serveren (read-only).
+    """
+    log(f"Static Route: Request to serve transcript JSON: {filename}", "INFO")
+    return _safe_send_from_project_subdir(TRANSCRIPTS_FOLDER_NAME, filename, as_attachment=False)
 
 
 # --- NEW Route for Favicon ---

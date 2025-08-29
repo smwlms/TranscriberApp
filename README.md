@@ -42,10 +42,15 @@ TranscriberApp is een lokale webapplicatie waarmee je audio kunt transcriberen e
    ```bash
    sudo apt update && sudo apt install -y ffmpeg cmake pkg-config libprotobuf-dev protobuf-compiler
    ```
-5. Python packages installeren:
-   ```bash
-   make PYTHON_INTERPRETER=python3.11 install
-   ```
+5. Python packages installeren (snelle dev of volledige installatie):
+   - Snelle API‑ontwikkeling (lichte dependencies):
+     ```bash
+     make PYTHON_INTERPRETER=python3.11 install-dev
+     ```
+   - Volledige installatie (incl. ML‑deps, kan lang duren):
+     ```bash
+     make PYTHON_INTERPRETER=python3.11 install
+     ```
 6. `.env` aanmaken met je Hugging Face token:
    ```bash
    echo "HUGGING_FACE_TOKEN=hf_jouw_token" > .env
@@ -67,16 +72,68 @@ TranscriberApp is een lokale webapplicatie waarmee je audio kunt transcriberen e
    ```bash
    source venv/bin/activate
    ```
-3. Start de backend:
+3. Eén commando om alles te starten (backend +, indien beschikbaar, frontend):
    ```bash
-   make PYTHON_INTERPRETER=python3.11 run-web
+   make up               # gebruikt .venv/bin/python en start services
    ```
-4. Open een tweede terminal en start het frontend:
+   - Geen Node/npm? Dan slaat `make up` het frontend automatisch over en draait alleen de backend.
+4. macOS: frontend in nieuw Terminal‑venster + backend in huidige terminal
    ```bash
-   cd frontend
-   npm install          # alleen de eerste keer
-   npm run dev
+   make up-macos
    ```
+   - Opent een nieuw Terminal‑venster met `npm run dev`; backend draait in je huidige terminal.
+   - Geen macOS/osascript? Gebruik dan `make dev-tmux` (zie hieronder) of handmatig twee terminals.
+   - iTerm(2) gebruiker? Gebruik `make up-iterm`.
+5. Alternatief: afzonderlijk starten
+   ```bash
+   make run-backend      # alleen backend
+   make run-frontend     # alleen frontend (vereist npm)
+   ```
+6. Smoke‑test tegen draaiende backend:
+   ```bash
+   make smoke
+   ```
+
+### Alternatief: tmux (2 panelen in één terminal)
+```bash
+brew install tmux   # indien nog niet aanwezig
+make dev-tmux       # opent 2 panelen: backend links, frontend rechts
+```
+
+### Python installeren/upgraden (macOS)
+- Detecteer welke Python wordt gebruikt:
+  ```bash
+  make check-python
+  ```
+- Homebrew installeren (macOS):
+  ```bash
+  make install-homebrew   # interactieve bevestiging; opent het officiële installatie-script
+  ```
+- Installeer Python 3.11 via Homebrew (indien aanwezig):
+  ```bash
+  make install-python-macos
+  # daarna:
+  make PYTHON_INTERPRETER=$(brew --prefix)/bin/python3.11 install-full
+  ```
+- Zonder Homebrew: installeer Python 3.11 via https://www.python.org/downloads/ en gebruik het pad:
+  ```bash
+  make PYTHON_INTERPRETER=/pad/naar/python3.11 install-full
+  ```
+
+### Node/npm installeren (macOS)
+```bash
+brew install node                   # snelste manier
+# of via nvm:
+brew install nvm && mkdir -p ~/.nvm
+export NVM_DIR="$HOME/.nvm" && . /opt/homebrew/opt/nvm/nvm.sh
+nvm install --lts
+```
+
+### Windows: twee vensters (PowerShell)
+```powershell
+./scripts/up_windows.ps1
+```
+Dit opent twee PowerShell‑vensters: backend (venv) en frontend (npm run dev) als npm beschikbaar is.
 5. Ga naar `http://localhost:5173` in je browser en gebruik de webinterface om de pipeline te starten.
 
 ### CLI (optioneel)
@@ -101,3 +158,40 @@ MIT – zie `LICENSE`.
 
 ## Contact
 Samuel Willems – willems.samuel@gmail.com
+
+---
+
+## API Cheatsheet (Dev)
+
+- Health:
+  - `GET /` → `{ status: "ok" }`
+
+- Upload audio:
+  - `POST /api/v1/upload_audio` (multipart: `audio_file=@file.wav`)
+
+- Pipeline starten:
+  - `POST /api/v1/start_pipeline` (form: `relative_audio_path=audio/<bestand>` + optionele overrides volgens schema)
+
+- Status polling:
+  - `GET /api/v1/status/<job_id>`
+
+- Review data ophalen (wanneer status `WAITING_FOR_REVIEW`):
+  - `GET /api/v1/get_review_data/<job_id>`
+
+- Review data opslaan (samengevoegd endpoint):
+  - `POST /api/v1/update_review_data/<job_id>`
+  - Body verwacht: `{ "final_speaker_map": { ... } }`
+  - Backwards‑compatible alias: `{ "speaker_map": { ... } }` werkt ook
+
+- Transcript bijwerken (intermediate):
+  - `POST /api/v1/update_transcript_data/<job_id>` met `{ "transcript": [...] }`
+
+- Losse adjust endpoint (snelle export):
+  - `POST /api/v1/transcriptions/<id>/adjust`
+  - `{ "text": "..." }` → `results/<id>.txt` (append met `{"append": true}`)
+  - `{ "transcript": [ ... ] }` → `transcripts/<id>.json` en `results/<id>.html`
+
+- Statische bestanden:
+  - `GET /results/<bestand>` → resultaten (HTML/TXT)
+  - `GET /audio/<bestand>` → geuploade audio
+  - `GET /transcripts/<bestand>.json` → transcript JSON (read‑only)
