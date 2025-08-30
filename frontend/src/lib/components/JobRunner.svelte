@@ -71,6 +71,8 @@
     }
   }
 
+  $: cacheSuffix = $currentJob.job_id ? `?v=${$currentJob.job_id}` : '';
+
   async function startPipelineAction() {
     if (!canStart) return;
     log('Attempting to start pipeline with:', {
@@ -310,12 +312,12 @@
 
   {#if $currentJob.status === 'COMPLETED'}
     <ResultViewer
-      htmlPath="results/transcript.html"
-      summaryPath="results/summary.txt"
-      advancedPath="results/advanced_analysis.json"
+      htmlPath={$currentJob.result?.transcript_path ? `${$currentJob.result.transcript_path}${cacheSuffix}` : undefined}
+      summaryPath={$currentJob.result?.summary_path ? `${$currentJob.result.summary_path}${cacheSuffix}` : undefined}
+      advancedPath={$currentJob.result?.advanced_analysis_path ? `${$currentJob.result.advanced_analysis_path}${cacheSuffix}` : undefined}
       jobId={$currentJob.job_id}
       audioRelativePath={$currentJob.relative_audio_path}
-      on:rerun={() => { 
+      on:rerun={() => {
         // Reset local UI state and resume polling for re-analysis
         if (pollInterval) stopPolling();
         currentJob.patch({ status: 'ANALYZING', progress: 0 });

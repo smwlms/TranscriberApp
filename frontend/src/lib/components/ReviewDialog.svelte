@@ -23,6 +23,7 @@
   let uniqueSpeakers = [];
   let editedMap = {};
   let contextVisible = {};
+  let whyVisible = {};
   let rolesHint = {};
   let firstSpeakerId = null;
 
@@ -58,12 +59,15 @@
 
       const initialEditedMap = {};
       const initialContextVisible = {};
+      const initialWhyVisible = {};
       uniqueSpeakers.forEach((id) => {
         initialEditedMap[id] = proposedMap[id]?.name ?? '';
         initialContextVisible[id] = false;
+        initialWhyVisible[id] = false;
       });
       editedMap = initialEditedMap;
       contextVisible = initialContextVisible;
+      whyVisible = initialWhyVisible;
 
     } catch (e) {
       console.error('[ReviewDialog] Fetch review data failed:', e);
