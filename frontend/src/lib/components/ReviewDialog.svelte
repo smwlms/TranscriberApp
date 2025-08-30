@@ -24,6 +24,7 @@
   let editedMap = {};
   let contextVisible = {};
   let whyVisible = {};
+  let greetingCache = [];
   let rolesHint = {};
   let firstSpeakerId = null;
 
@@ -67,7 +68,8 @@
       });
 
       // Fallback: if no LLM suggestion, try extracting names from greetings
-      greetingMatches().forEach(({ speaker, name }) => {
+      greetingCache = greetingMatches();
+      greetingCache.forEach(({ speaker, name }) => {
         if (!initialEditedMap[speaker]) {
           initialEditedMap[speaker] = name;
         }
@@ -147,9 +149,8 @@
     if (rolesHint?.callee) lines.push(`Context: callee = ${rolesHint.callee}`);
     const role = roleForSpeaker(sid);
     if (role) lines.push(`Rol-hint: deze spreker is '${role}'.`);
-    const gm = greetingMatches();
-    if (gm.length){
-      const relevant = gm.map(g=>`[Index ${g.index}] ${g.speaker} begroet '${g.name}' → toegewezen aan andere spreker`).join('\n');
+    if (greetingCache.length){
+      const relevant = greetingCache.map(g=>`[Index ${g.index}] ${g.speaker} begroet '${g.name}' → toegewezen aan andere spreker`).join('\n');
       lines.push('Begroetingspatronen:\n'+relevant);
     }
     const ri = proposedMap[sid]?.reasoning_indices || [];
@@ -195,6 +196,7 @@
       }
       await updateTranscriptData(jobId, updatedFullTranscript);
       transcript = updatedFullTranscript;
+      greetingCache = greetingMatches();
       isEditingTranscript = false;
       // If early segments changed, re-run name detection to refresh suggestions
       if (firstNChanged) {
