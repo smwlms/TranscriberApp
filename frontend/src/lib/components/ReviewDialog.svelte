@@ -23,6 +23,7 @@
   let uniqueSpeakers = [];
   let editedMap = {};
   let contextVisible = {};
+  let whyVisible = {};
   let rolesHint = {};
   let firstSpeakerId = null;
 
@@ -58,12 +59,22 @@
 
       const initialEditedMap = {};
       const initialContextVisible = {};
+      const initialWhyVisible = {};
       uniqueSpeakers.forEach((id) => {
         initialEditedMap[id] = proposedMap[id]?.name ?? '';
         initialContextVisible[id] = false;
+        initialWhyVisible[id] = false;
+      });
+
+      // Fallback: if no LLM suggestion, try extracting names from greetings
+      greetingMatches().forEach(({ speaker, name }) => {
+        if (!initialEditedMap[speaker]) {
+          initialEditedMap[speaker] = name;
+        }
       });
       editedMap = initialEditedMap;
       contextVisible = initialContextVisible;
+      whyVisible = initialWhyVisible;
 
     } catch (e) {
       console.error('[ReviewDialog] Fetch review data failed:', e);
@@ -369,7 +380,7 @@
                       on:click={() => toggleContext(speakerId)}
                       class="px-3 py-1.5 bg-gray-700 rounded text-sm hover:bg-gray-600 transition-colors text-gray-200 w-full sm:w-auto"
                     >
-                      {#if contextVisible[speakerId]}Verberg{:else}Waarom?{/if}
+                      {#if contextVisible[speakerId]}Verberg context{:else}Toon context{/if}
                     </button>
                   {/if}
                 </div>

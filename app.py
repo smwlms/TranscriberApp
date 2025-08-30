@@ -258,6 +258,13 @@ def health_check():
     log("Health check '/' endpoint accessed.", "DEBUG")
     return jsonify({"status": "ok", "message": "Transcriber API is running."})
 
+@app.route("/healthz")
+@cross_origin(origins=cors_origins_list)
+def healthz():
+    """Lightweight endpoint used by the frontend to verify server health."""
+    log("Health check '/healthz' endpoint accessed.", "DEBUG")
+    return jsonify({"status": "ok"})
+
 # Endpoint voor losse TXT‑export - Deze is specifiek en lijkt buiten de hoofd API flow
 # De @cross_origin decorator hier is redundant als de globale CORS(app, ...) al alles dekt.
 # Echter, als je fijnmazige controle wilt per route, kan het nuttig zijn.

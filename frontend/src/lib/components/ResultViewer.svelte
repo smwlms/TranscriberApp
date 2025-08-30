@@ -32,22 +32,28 @@
 
   async function loadResources() {
     if (htmlPath) {
-      try { transcriptHtml = await (await fetch(htmlPath)).text(); }
+      try { transcriptHtml = await (await fetch(htmlPath, { cache: 'no-store' })).text(); }
       catch (err) { transcriptHtml = `<p class=\"text-red-600\">Kon transcript niet laden: ${err.message}</p>`; }
     }
     if (summaryPath) {
-      try { summaryText = await (await fetch(summaryPath)).text(); }
+      try { summaryText = await (await fetch(summaryPath, { cache: 'no-store' })).text(); }
       catch (err) { summaryText = `Kon samenvatting niet laden: ${err.message}`; }
     }
     if (advancedPath) {
       try {
-        const res = await fetch(advancedPath);
+        const res = await fetch(advancedPath, { cache: 'no-store' });
         if (res.ok) advanced = await res.json();
       } catch (err) { /* optional */ }
     }
   }
 
   onMount(loadResources);
+
+  let prevPaths = { htmlPath, summaryPath, advancedPath };
+  $: if (htmlPath !== prevPaths.htmlPath || summaryPath !== prevPaths.summaryPath || advancedPath !== prevPaths.advancedPath) {
+    prevPaths = { htmlPath, summaryPath, advancedPath };
+    loadResources();
+  }
 
   // Build/refresh the local cache of word spans when HTML changes
   function buildWordIndex() {
