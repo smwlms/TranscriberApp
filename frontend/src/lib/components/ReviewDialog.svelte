@@ -20,12 +20,29 @@
   let transcript = [];
   let proposedMap = {};
   let contextSnippets = {};
+  let nameEvidence = {};
+  let contextNamesDetected = [];
+  let extraContext = '';
   let uniqueSpeakers = [];
   let editedMap = {};
   let contextVisible = {};
   let whyVisible = {};
+  let greetingCache = [];
   let rolesHint = {};
   let firstSpeakerId = null;
+
+  // --- Speaker assist features ---
+  let expectedSpeakers = 2; // adjustable in UI
+  let isAssigningSpeakers = false;
+  let hasSpeakerAssignmentChanges = false;
+  let speakerCounts = {}; // { sid: count of segments }
+  let speakerIndexMap = {}; // { sid: [segment indices] }
+  let speakerNavPos = {}; // { sid: pointer }
+  const SPEAKER_COLORS = ['#93c5fd','#fca5a5','#86efac','#fcd34d','#f9a8d4','#a7f3d0','#fbbf24','#c4b5fd','#fda4af','#99f6e4'];
+  function colorForSpeaker(sid){ const idx = uniqueSpeakers.indexOf(sid); return SPEAKER_COLORS[(idx>=0?idx:0)%SPEAKER_COLORS.length]; }
+
+  // Consolidation hints state
+  let consolidationHints = [];
 
   let isEditingTranscript = false;
   let editedTranscript = {};
@@ -53,9 +70,15 @@
       transcript = data.intermediate_transcript || [];
       proposedMap = data.proposed_map || {};
       contextSnippets = data.context_snippets || {};
+      nameEvidence = data.name_evidence || {};
+      contextNamesDetected = data.context_names_detected || [];
+      extraContext = data.extra_context || '';
       rolesHint = data.roles_hint || {};
       firstSpeakerId = data.first_speaker_id || null;
       uniqueSpeakers = Array.from(new Set(transcript.map((s) => s.speaker))).sort();
+      // Initialize counts and navigation helpers
+      rebuildSpeakerStats();
+      if (!Number.isInteger(expectedSpeakers) || expectedSpeakers < 1) expectedSpeakers = 2;
 
       const initialEditedMap = {};
       const initialContextVisible = {};
@@ -64,6 +87,14 @@
         initialEditedMap[id] = proposedMap[id]?.name ?? '';
         initialContextVisible[id] = false;
         initialWhyVisible[id] = false;
+      });
+      
+      // Fallback: if no LLM suggestion, try extracting names from greetings
+      greetingCache = greetingMatches();
+      greetingCache.forEach(({ speaker, name }) => {
+        if (!initialEditedMap[speaker] && isLikelyName(name)) {
+          initialEditedMap[speaker] = name;
+        }
       });
       editedMap = initialEditedMap;
       contextVisible = initialContextVisible;
@@ -81,6 +112,12 @@
     contextVisible[speakerId] = !contextVisible[speakerId];
   }
 
+  function assignNameToSpeaker(name, speakerId){
+    if(!name || !speakerId) return;
+    editedMap[speakerId] = name;
+    whyVisible[speakerId] = true;
+  }
+
   function swapNames() {
     // Simple 2-speaker swap helper. If more, swap the first two.
     const ids = uniqueSpeakers.slice(0, 2);
@@ -89,6 +126,95 @@
     const tmp = editedMap[a];
     editedMap[a] = editedMap[b];
     editedMap[b] = tmp;
+  }
+
+  function rebuildSpeakerStats(){
+    const counts = {}; const idxMap = {}; const nav = {};
+    (transcript||[]).forEach((seg, i)=>{
+      const sid = seg?.speaker; if(!sid) return;
+      counts[sid] = (counts[sid]||0)+1;
+      (idxMap[sid]||(idxMap[sid]=[])).push(i);
+    });
+    uniqueSpeakers = Object.keys(counts).sort();
+    uniqueSpeakers.forEach(s=>{ if(nav[s]===undefined) nav[s]=0; });
+    speakerCounts = counts; speakerIndexMap = idxMap; speakerNavPos = { ...speakerNavPos, ...nav };
+    computeConsolidationHints();
+  }
+
+  function scrollToNextFor(sid){
+    const list = speakerIndexMap[sid]||[]; if(!list.length) return;
+    speakerNavPos[sid] = (speakerNavPos[sid]||0) % list.length;
+    const i = list[speakerNavPos[sid]]; speakerNavPos[sid] = (speakerNavPos[sid]+1)%list.length;
+    const el = document.getElementById(`seg-${i}`);
+    el?.scrollIntoView({behavior:'smooth', block:'start'});
+  }
+
+  function toggleAssignSpeakers(){ isAssigningSpeakers = !isAssigningSpeakers; }
+
+  function setSegmentSpeaker(i, newSid){
+    const old = transcript[i]?.speaker; if(old === newSid) return;
+    transcript[i].speaker = newSid;
+    hasSpeakerAssignmentChanges = true;
+    rebuildSpeakerStats();
+  }
+
+  function consolidateToExpected(){
+    const n = Math.max(1, parseInt(expectedSpeakers||2,10));
+    const counts = {};
+    transcript.forEach(s=>{ if(s?.speaker) counts[s.speaker]=(counts[s.speaker]||0)+1; });
+    const sorted = Object.entries(counts).sort((a,b)=>b[1]-a[1]).map(([sid])=>sid);
+    const keep = new Set(sorted.slice(0,n));
+    const kept = Array.from(keep);
+    const windowK = 2;
+    for (let i=0;i<transcript.length;i++){
+      const sid = transcript[i]?.speaker; if(!sid || keep.has(sid)) continue;
+      const votes = new Map();
+      for (let d=1; d<=windowK; d++){
+        const left = transcript[i-d]; const right = transcript[i+d];
+        if(left?.speaker && keep.has(left.speaker)) votes.set(left.speaker, (votes.get(left.speaker)||0) + (windowK-d+1));
+        if(right?.speaker && keep.has(right.speaker)) votes.set(right.speaker, (votes.get(right.speaker)||0) + (windowK-d+1));
+      }
+      let chosen = kept[0]; let best=-1;
+      for (const k of kept){ const v = votes.get(k)||0; if(v>best){ best=v; chosen=k; } }
+      transcript[i].speaker = chosen;
+    }
+    hasSpeakerAssignmentChanges = true;
+    rebuildSpeakerStats();
+  }
+
+  function computeConsolidationHints(){
+    const n = Math.max(1, parseInt(expectedSpeakers||2,10));
+    const counts = {}; transcript.forEach(s=>{ if(s?.speaker) counts[s.speaker]=(counts[s.speaker]||0)+1; });
+    const sorted = Object.entries(counts).sort((a,b)=>b[1]-a[1]).map(([sid])=>sid);
+    const keep = new Set(sorted.slice(0,n));
+    const kept = Array.from(keep);
+    const windowK = 2; const hintsMap = new Map();
+    for (let i=0;i<transcript.length;i++){
+      const sid = transcript[i]?.speaker; if(!sid || keep.has(sid)) continue;
+      const votes = new Map();
+      for (let d=1; d<=windowK; d++){
+        const l = transcript[i-d]; const r = transcript[i+d];
+        if(l?.speaker && keep.has(l.speaker)) votes.set(l.speaker, (votes.get(l.speaker)||0)+(windowK-d+1));
+        if(r?.speaker && keep.has(r.speaker)) votes.set(r.speaker, (votes.get(r.speaker)||0)+(windowK-d+1));
+      }
+      let chosen = kept[0]; let best=-1; let total=0;
+      for (const k of kept){ const v=votes.get(k)||0; total+=v; if(v>best){best=v; chosen=k;} }
+      const conf = total>0 ? best/total : 0.5;
+      const key = `${sid}=>${chosen}`;
+      if(!hintsMap.has(key)) hintsMap.set(key,{fromSid:sid,toSid:chosen,indices:[],sum:0,count:0});
+      const h = hintsMap.get(key); h.indices.push(i); h.sum+=conf; h.count+=1;
+    }
+    consolidationHints = Array.from(hintsMap.values()).map(h=>({
+      fromSid:h.fromSid, toSid:h.toSid, indices:h.indices, count:h.count, avgConfidence: h.count? (h.sum/h.count):0
+    })).sort((a,b)=>b.count-a.count);
+  }
+
+  function applyHint(h){
+    if(!h || !Array.isArray(h.indices)) return;
+    h.indices.forEach(i=>{ if(transcript[i]) transcript[i].speaker = h.toSid; });
+    hasSpeakerAssignmentChanges = true;
+    rebuildSpeakerStats();
+    computeConsolidationHints();
   }
 
   const iconSize = 14;
@@ -114,14 +240,20 @@
       .join('\n–––\n');
   }
 
-  const STOP_NAMES = new Set(['van','wel','ja','nee','u','uw','de','het','een','oke','oké','ok','goed','dag','hallo','hoi','hey','bedankt','thanks','als','dat','dit','eh','euh','uh','uhm','hm','meneer','mevrouw','sir','madam','beste','goedemiddag','goedenavond','goedemorgen']);
+  function isNameToken(word){
+    if (!word || !contextNamesDetected || !contextNamesDetected.length) return false;
+    const w = (word||'').toString().replace(/[^A-Za-zÀ-ÖØ-öø-ÿ\-']/g,'').toLowerCase();
+    return contextNamesDetected.some(n=>n && n.toLowerCase() === w);
+  }
+
+  const STOP_NAMES = new Set(['van','wel','ja','nee','u','uw','de','het','een','oke','oké','ok','goed','dag','hallo','hoi','hey','bedankt','thanks','als','dat','dit','eh','euh','uh','uhm','hm','meneer','mevrouw','sir','madam','beste','goedemiddag','goedenavond','goedemorgen','kun','kan','kunt']);
   function isLikelyName(s){
     if (!s) return false; const t = normalized(s);
     if (!t || STOP_NAMES.has(t)) return false;
     return /^[a-zà-öø-ÿ][a-zà-öø-ÿ\-']{1,}$/i.test(t);
   }
   function greetingMatches() {
-    const re = /^(?:ja|hallo|hoi|hey|dag|goedemiddag|goedenavond|goedemorgen)[,\s]+([A-Z][\w\-]+)/i;
+    const re = /^(?:ja|hallo|hoi|hey|dag|goedemiddag|goedenavond|goedemorgen|goeiemorgen|goeiemiddag)[,\s]+([A-Z][\w\-]+)/i;
     const matches = [];
     const N = Math.min(8, transcript.length);
     for (let i=0;i<N;i++){
@@ -140,9 +272,8 @@
     if (rolesHint?.callee) lines.push(`Context: callee = ${rolesHint.callee}`);
     const role = roleForSpeaker(sid);
     if (role) lines.push(`Rol-hint: deze spreker is '${role}'.`);
-    const gm = greetingMatches();
-    if (gm.length){
-      const relevant = gm.map(g=>`[Index ${g.index}] ${g.speaker} begroet '${g.name}' → toegewezen aan andere spreker`).join('\n');
+    if (greetingCache.length){
+      const relevant = greetingCache.map(g=>`[Index ${g.index}] ${g.speaker} begroet '${g.name}' → toegewezen aan andere spreker`).join('\n');
       lines.push('Begroetingspatronen:\n'+relevant);
     }
     const ri = proposedMap[sid]?.reasoning_indices || [];
@@ -188,6 +319,7 @@
       }
       await updateTranscriptData(jobId, updatedFullTranscript);
       transcript = updatedFullTranscript;
+      greetingCache = greetingMatches();
       isEditingTranscript = false;
       // If early segments changed, re-run name detection to refresh suggestions
       if (firstNChanged) {
@@ -215,11 +347,35 @@
     }
   }
 
+  async function saveSpeakerAssignmentsIfNeeded(){
+    if (!hasSpeakerAssignmentChanges) return;
+    isLoading = true;
+    try{
+      await updateTranscriptData(jobId, transcript);
+      hasSpeakerAssignmentChanges = false;
+      rebuildSpeakerStats();
+      try {
+        const resp = await reDetectNames(jobId);
+        if (resp && resp.proposed_map) {
+          proposedMap = resp.proposed_map || {};
+          contextSnippets = resp.context_snippets || {};
+          Object.keys(proposedMap).forEach((id) => { if (!editedMap[id]) editedMap[id] = proposedMap[id]?.name ?? ''; });
+        }
+      } catch {}
+    } catch(e){
+      console.error('[ReviewDialog] Save speaker assignments failed:', e);
+      error = `Fout bij opslaan speaker toewijzingen: ${e.message}`;
+    } finally { isLoading = false; }
+  }
+
   async function saveAll() {
     if (isSaving) return;
     isSaving = true;
     error = '';
     try {
+      if (hasSpeakerAssignmentChanges) {
+        await saveSpeakerAssignmentsIfNeeded();
+      }
       if (isEditingTranscript && Object.keys(editedTranscript).length) {
         console.log('[ReviewDialog] Transcript is being edited, saving transcript first...');
         await saveTranscriptEdits();
@@ -291,11 +447,19 @@
 
 </script>
 
-<div class="fixed inset-0 bg-gray-800 bg-opacity-60 flex items-center justify-center p-4 z-50">
-  <div class="bg-gray-900 text-gray-100 rounded-lg w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
-    <header class="flex justify-between items-center p-4 border-b border-gray-700">
-      <h2 class="text-lg font-semibold">Speaker & Transcript Review</h2>
-      <button on:click={cancelReview} disabled={isSaving} class="text-2xl hover:text-gray-300 disabled:opacity-50 transition-opacity">&times;</button>
+<div class="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
+  <div class="rounded-xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl" style="background-color: rgb(var(--page)); color: rgb(var(--text)); border: 1px solid rgb(var(--border));">
+    <header class="flex justify-between items-center p-4" style="border-bottom: 1px solid rgb(var(--border));">
+      <div class="flex items-center gap-4">
+        <h2 class="text-lg font-semibold">Speaker & Transcript Review</h2>
+        <div class="flex items-center gap-2 text-sm">
+          <label for="expected-speakers" class="muted">Verwacht aantal sprekers</label>
+          <input id="expected-speakers" type="number" min="1" class="w-20 px-2 py-1 rounded" bind:value={expectedSpeakers}>
+          <button class="btn btn-ghost text-xs px-2 py-1" on:click={consolidateToExpected} disabled={isLoading}>Consolideer</button>
+          <button class="btn btn-ghost text-xs px-2 py-1" on:click={toggleAssignSpeakers} aria-pressed={isAssigningSpeakers}>{isAssigningSpeakers ? 'Stop toewijzen' : 'Wijs sprekers toe'}</button>
+        </div>
+      </div>
+      <button on:click={cancelReview} disabled={isSaving} class="text-2xl muted hover:opacity-70 disabled:opacity-50 transition-opacity">&times;</button>
     </header>
 
     <main class="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
@@ -304,12 +468,12 @@
           <p class="text-gray-400 text-lg">Review data laden…</p>
         </div>
       {:else if error}
-        <div class="bg-red-800 p-4 rounded text-red-100 border border-red-600">
+        <div class="p-4 rounded border" style="border-color: rgb(239 68 68); background: rgba(239,68,68,0.08); color: rgb(127 29 29);">
           <strong class="block mb-2">Fout:</strong>
           <p class="mb-3">{error}</p>
           {#if !isSaving}
             <button on:click={fetchReviewData}
-              class="px-3 py-1.5 bg-yellow-500 text-black rounded hover:bg-yellow-600 text-sm mr-2">
+              class="btn btn-ghost text-sm">
               Opnieuw proberen
             </button>
           {/if}
@@ -335,22 +499,52 @@
 
           <section>
             <div class="flex items-center justify-between mb-3">
-              <h3 class="text-xl font-semibold text-gray-200">Spreker Namen Toewijzen</h3>
-              {#if uniqueSpeakers.length === 2}
-                <button type="button" on:click={swapNames}
-                  class="px-2 py-1 text-xs rounded bg-gray-700 hover:bg-gray-600 text-white"
-                  title="Wissel namen tussen de twee sprekers">
-                  ⇄ Wissel
-                </button>
-              {/if}
+              <h3 class="text-xl font-semibold">Spreker Namen Toewijzen</h3>
+              <div class="flex items-center gap-2 flex-wrap">
+                {#each uniqueSpeakers as sid (sid)}
+                  <button type="button" class="chip" style={`color:${colorForSpeaker(sid)}; border-color:${colorForSpeaker(sid)};`} on:click={() => scrollToNextFor(sid)} title="Scroll naar volgende voorkomen">
+                    {sid} · {speakerCounts[sid] || 0}
+                  </button>
+                {/each}
+                {#if uniqueSpeakers.length === 2}
+                  <button type="button" on:click={swapNames}
+                    class="btn btn-ghost text-xs px-2 py-1"
+                    title="Wissel namen tussen de twee sprekers">
+                    ⇄ Wissel
+                  </button>
+                {/if}
+              </div>
             </div>
+            {#if extraContext}
+              <div class="mb-3 text-sm">
+                <div class="opacity-80">Extra context:</div>
+                <div class="mt-1 p-2 rounded whitespace-pre-wrap" style="border: 1px solid rgb(var(--border)); background-color: rgb(var(--page));">{extraContext}</div>
+                {#if contextNamesDetected && contextNamesDetected.length}
+                  <div class="mt-2 text-xs muted">Gedetecteerde namen: {#each contextNamesDetected as nm, i}<span class="font-semibold">{nm}</span>{i<contextNamesDetected.length-1?', ':''}{/each}</div>
+                {/if}
+              </div>
+            {/if}
+            {#if consolidationHints.length}
+              <div class="mb-3 text-xs space-y-2">
+                {#each consolidationHints as h (`${h.fromSid}-${h.toSid}`)}
+                  <div class="flex items-center gap-2 rounded px-2 py-1" style="border: 1px solid rgb(var(--border));">
+                    <span class="font-mono" style={`color:${colorForSpeaker(h.fromSid)}`}>{h.fromSid}</span>
+                    <span class="opacity-70">→</span>
+                    <span class="font-mono" style={`color:${colorForSpeaker(h.toSid)}`}>{h.toSid}</span>
+                    <span class="opacity-80">· {Math.round(h.avgConfidence*100)}% zeker · {h.count} zinnen</span>
+                    <button class="btn btn-ghost text-xs px-2 py-0.5" on:click={() => { const i=h.indices[0]; const el=document.getElementById(`seg-${i}`); el?.scrollIntoView({behavior:'smooth', block:'start'}); }}>Ga naar</button>
+                    <button class="btn btn-primary text-xs px-2 py-0.5" on:click={() => applyHint(h)}>Pas toe</button>
+                  </div>
+                {/each}
+              </div>
+            {/if}
             {#if uniqueSpeakers.length === 0 && !isLoading}
                 <p class="text-gray-400">Geen sprekers geïdentificeerd in dit transcript.</p>
             {/if}
             <div class="space-y-4">
               {#each uniqueSpeakers as speakerId (speakerId)}
                 <div class="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-3">
-                  <label for={`speaker-name-${speakerId}`} class="w-full sm:w-32 font-mono text-sm text-gray-300 shrink-0 flex items-center gap-2">{speakerId}:
+                  <label for={`speaker-name-${speakerId}`} class="w-full sm:w-32 font-mono text-sm shrink-0 flex items-center gap-2" style={`color:${colorForSpeaker(speakerId)}`}>{speakerId}:
                     {#if roleForSpeaker(speakerId) === 'caller'}
                       {@html PhoneOutgoing()}<span class="text-xs text-blue-400">caller</span>
                     {:else if roleForSpeaker(speakerId) === 'callee'}
@@ -364,40 +558,62 @@
                     type="text"
                     bind:value={editedMap[speakerId]}
                     placeholder={proposedMap[speakerId]?.name ? `Voorgesteld: ${proposedMap[speakerId].name}` : 'Naam invoeren...'}
-                    class="flex-grow p-2 rounded bg-gray-800 text-gray-100 border focus:ring-2 outline-none w-full {isLikelyName(editedMap[speakerId]) ? 'border-gray-700 focus:ring-blue-500 focus:border-blue-500' : 'border-red-600 focus:ring-red-500 focus:border-red-500'}"
+                    class="flex-grow p-2 rounded w-full {isLikelyName(editedMap[speakerId]) ? '' : ''}"
                   />
-                  <button type="button" class="text-xs px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-white" on:click={() => whyVisible[speakerId]=!whyVisible[speakerId]}>Waarom?</button>
+                  {#if proposedMap[speakerId]?.confidence !== undefined}
+                    <span class="text-xs text-gray-400">{Math.round((proposedMap[speakerId].confidence||0)*100)}%</span>
+                  {/if}
+                  <button type="button" class="btn btn-ghost text-xs px-2 py-1" on:click={() => whyVisible[speakerId]=!whyVisible[speakerId]}>Waarom?</button>
                   {#if proposedMap[speakerId]?.reasoning_indices?.length}
                     <button
                       type="button"
                       on:click={() => toggleContext(speakerId)}
-                      class="px-3 py-1.5 bg-gray-700 rounded text-sm hover:bg-gray-600 transition-colors text-gray-200 w-full sm:w-auto"
+                      class="btn btn-ghost text-sm w-full sm:w-auto"
                     >
-                      {#if contextVisible[speakerId]}Verberg{:else}Waarom?{/if}
+                      {#if contextVisible[speakerId]}Verberg context{:else}Toon context{/if}
                     </button>
+                  {/if}
+                  {#if contextNamesDetected && contextNamesDetected.length}
+                    {#each contextNamesDetected as nm (nm)}
+                      <button type="button" class="btn btn-ghost text-xs px-2 py-1" on:click={() => assignNameToSpeaker(nm, speakerId)}>Koppel ‘{nm}’</button>
+                    {/each}
                   {/if}
                 </div>
                 {#if whyVisible[speakerId]}
-                  <pre class="mt-2 p-2 bg-gray-800 border border-gray-700 rounded text-gray-300 text-xs whitespace-pre-wrap">{whyFor(speakerId)}</pre>
+                  <pre class="mt-2 p-2 rounded text-xs whitespace-pre-wrap" style="border: 1px solid rgb(var(--border)); background-color: rgb(var(--page));">{whyFor(speakerId)}</pre>
                 {/if}
                 {#if contextVisible[speakerId]}
-                  <pre
-                    class="p-3 bg-gray-800 border border-gray-700 rounded text-gray-300 text-xs overflow-auto max-h-40 custom-scrollbar whitespace-pre-wrap"
-                  >{getRelevantContext(speakerId)}</pre>
+                  <pre class="p-3 rounded text-xs overflow-auto max-h-40 custom-scrollbar whitespace-pre-wrap" style="border: 1px solid rgb(var(--border)); background-color: rgb(var(--page));">{getRelevantContext(speakerId)}</pre>
                 {/if}
               {/each}
             </div>
+            {#if nameEvidence?.name_mentions?.length}
+              <div class="mt-4">
+                <h4 class="text-lg font-semibold mb-2">Evidence</h4>
+                <ul class="space-y-1 text-sm">
+                  {#each nameEvidence.name_mentions as ev, ei}
+                    <li>
+                      <button class="underline hover:text-blue-300" type="button" on:click={() => { const el = document.getElementById(`seg-${ev.index}`); el?.scrollIntoView({behavior:'smooth', block:'start'}); }}>
+                        Ga naar segment {ev.index}
+                      </button>
+                      <span class="opacity-70"> — {ev.snippet?.split('\n')[0] || '(snippet)'} </span>
+                    </li>
+                  {/each}
+                </ul>
+              </div>
+            {/if}
           </section>
 
           <section>
-            <div class="flex justify-between items-center mb-3">
-              <h3 class="text-xl font-semibold text-gray-200">Transcript</h3>
+              <div class="flex justify-between items-center mb-3">
+              <h3 class="text-xl font-semibold">Transcript</h3>
               {#if transcript.length > 0}
               <button
                 type="button"
                 on:click={isEditingTranscript ? saveTranscriptEdits : toggleEditTranscript}
                 disabled={isLoading && isEditingTranscript}
-                class="px-4 py-1.5 text-sm rounded bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                class="btn btn-primary text-sm"
+              >
                 {#if isEditingTranscript}
                   {#if isLoading}Opslaan...{:else}Transcriptie Opslaan{/if}
                 {:else}
@@ -405,23 +621,32 @@
                 {/if}
               </button>
               {/if}
-            </div>
+              </div>
             {#if transcript.length === 0 && !isLoading}
                 <p class="text-gray-400">Geen transcript beschikbaar.</p>
             {/if}
-            <div bind:this={transcriptContainer} class="bg-gray-800 p-4 rounded-lg max-h-96 overflow-y-auto text-gray-100 text-base border border-gray-700 custom-scrollbar">
+            <div bind:this={transcriptContainer} class="p-4 rounded-lg max-h-96 overflow-y-auto text-base custom-scrollbar" style="background-color: rgb(var(--page)); color: rgb(var(--text)); border: 1px solid rgb(var(--border));">
               {#each transcript as segment, i (segment.id || i)}
-                <div class="mb-4">
-                  <strong class="text-blue-400">{editedMap[segment.speaker] || segment.speaker}:</strong>
+                <div class="mb-4" id={`seg-${i}`} data-speaker={segment.speaker}>
+                  <div class="flex items-start gap-2">
+                    <strong style={`color:${colorForSpeaker(segment.speaker)}`}>{editedMap[segment.speaker] || segment.speaker}:</strong>
+                    {#if isAssigningSpeakers}
+                      <select class="text-xs rounded px-1 py-0.5" bind:value={segment.speaker} on:change={(e)=>setSegmentSpeaker(i, e.target.value)}>
+                        {#each uniqueSpeakers as sid (sid)}
+                          <option value={sid}>{sid}</option>
+                        {/each}
+                      </select>
+                    {/if}
+                  </div>
                   {#if isEditingTranscript}
                     <textarea
                       rows="3"
-                      class="w-full mt-1 bg-gray-700 text-gray-100 p-2 rounded border border-gray-600 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                      class="w-full mt-1 p-2 rounded"
                       bind:value={editedTranscript[i]}
                       aria-label={`Transcript segment ${i+1} by speaker ${editedMap[segment.speaker] || segment.speaker}`}
                     ></textarea>
                   {:else}
-                    <p class="mt-1 whitespace-pre-wrap leading-relaxed">
+                    <p class="mt-1 whitespace-pre-wrap leading-relaxed transcript-text">
                       {#if Array.isArray(segment.words) && segment.words.length}
                         {#each segment.words as word, j (`word-${i}-${j}`)}
                           <span
@@ -429,12 +654,13 @@
                             role="button"
                             tabindex={word.start !== undefined ? 0 : -1}
                             class="word-span"
+                            class:namehit={isNameToken(word.word)}
                             class:highlight={currentWordId === `word-${i}-${j}`}
                             class:clickable={word.start !== undefined}
                             on:click={() => handleWordClick(word)}
                             on:keydown={(event) => handleWordKeydown(event, word)}
                             aria-label={`Woord: ${word.word}, ${word.start !== undefined ? `start op ${word.start.toFixed(2)}s` : 'tijdstip onbekend'}`}
-                          >{word.word}</span>{#if j < segment.words.length - 1}&nbsp;{/if}
+                          >{word.word}</span>
                         {/each}
                       {:else}
                         {segment.text || '(Leeg segment)'}
@@ -449,18 +675,18 @@
       {/if}
     </main>
 
-    <footer class="flex justify-end items-center p-4 border-t border-gray-700 bg-gray-900 space-x-3">
+    <footer class="flex justify-end items-center p-4 space-x-3" style="border-top: 1px solid rgb(var(--border));">
       <button
         on:click={cancelReview}
         disabled={isSaving}
-        class="px-5 py-2.5 bg-gray-700 rounded hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-white"
+        class="btn btn-ghost"
       >
         Annuleren
       </button>
       <button
         on:click={saveAll}
         disabled={isLoading || isSaving || (uniqueSpeakers.length === 0 && transcript.length === 0)}
-        class="px-5 py-2.5 bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-white"
+        class="btn btn-primary"
       >
         {#if isSaving}Opslaan…{:else}Bevestigen &amp; Doorgaan{/if}
       </button>
@@ -492,11 +718,19 @@
   .word-span.clickable {
     cursor: pointer;
   }
+  /* Avoid horizontal scroll and keep natural wrapping */
+  .transcript-text { overflow-wrap: anywhere; word-break: break-word; }
+  .custom-scrollbar { overflow-x: hidden; }
+  .word-span { display: inline-block; margin-right: 0.25em; }
   .word-span.clickable:hover,
   .word-span.clickable:focus {
     text-decoration: underline;
     outline: 1px dashed #60a5fa; /* Tailwind's blue-400, of een andere focus indicator */
     outline-offset: 1px;
+  }
+  .word-span.namehit {
+    background-color: rgba(34,197,94,0.2); /* green-500 alpha */
+    border-radius: 3px;
   }
   .word-span:focus {
     outline: none; /* Verwijder default browser outline als we onze eigen focus style hebben */

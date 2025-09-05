@@ -4,6 +4,7 @@
   import { get } from 'svelte/store';
   import { apiBaseUrl } from '../stores.js';
   import { reAnalyze } from '../api.js';
+  import CopyIcon from '../icons/Copy.svelte';
 
   export let htmlPath;
   export let summaryPath;
@@ -29,25 +30,33 @@
   let currentHighlightedEl = null;
 
   $: audioSrc = audioRelativePath ? `${get(apiBaseUrl).replace('/api/v1','')}/${audioRelativePath}` : null;
+  $: finalJsonUrl = `${get(apiBaseUrl).replace('/api/v1','')}/transcripts/final_transcript.json`;
+  $: finalHtmlUrl = htmlPath || '';
 
   async function loadResources() {
     if (htmlPath) {
-      try { transcriptHtml = await (await fetch(htmlPath)).text(); }
+      try { transcriptHtml = await (await fetch(htmlPath, { cache: 'no-store' })).text(); }
       catch (err) { transcriptHtml = `<p class=\"text-red-600\">Kon transcript niet laden: ${err.message}</p>`; }
     }
     if (summaryPath) {
-      try { summaryText = await (await fetch(summaryPath)).text(); }
+      try { summaryText = await (await fetch(summaryPath, { cache: 'no-store' })).text(); }
       catch (err) { summaryText = `Kon samenvatting niet laden: ${err.message}`; }
     }
     if (advancedPath) {
       try {
-        const res = await fetch(advancedPath);
+        const res = await fetch(advancedPath, { cache: 'no-store' });
         if (res.ok) advanced = await res.json();
       } catch (err) { /* optional */ }
     }
   }
 
   onMount(loadResources);
+
+  let prevPaths = { htmlPath, summaryPath, advancedPath };
+  $: if (htmlPath !== prevPaths.htmlPath || summaryPath !== prevPaths.summaryPath || advancedPath !== prevPaths.advancedPath) {
+    prevPaths = { htmlPath, summaryPath, advancedPath };
+    loadResources();
+  }
 
   // Build/refresh the local cache of word spans when HTML changes
   function buildWordIndex() {
@@ -72,6 +81,14 @@
     if (!Number.isNaN(s)) {
       audioEl.currentTime = s;
       audioEl.play().catch(() => {});
+    }
+  }
+
+  // Provide keyboard accessibility equivalent to click on container
+  function onTranscriptKeydown(e) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onTranscriptClick(e);
     }
   }
 
@@ -122,40 +139,91 @@
       isSubmitting = false;
     }
   }
+
+  async function copyToClipboard(text) {
+    try { await navigator.clipboard.writeText(text || ''); }
+    catch (e) { console.error('Copy failed', e); }
+  }
+
+  // Lightweight rich-text renderer: paragraphs + bullet/numbered lists
+  function escapeHtml(s) {
+    return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
+  }
+  function toRichHtml(text) {
+    const lines = (text || '').split(/\r?\n/);
+    let html = '';
+    let mode = null; // 'ul' | 'ol'
+    const flush = () => { if (mode) { html += `</${mode}>`; mode = null; } };
+    for (const raw of lines) {
+      const line = raw.trimEnd();
+      const ul = /^[-*]\s+(.+)$/.exec(line);
+      const ol = /^(\d+)\.\s+(.+)$/.exec(line);
+      if (ul) {
+        if (mode !== 'ul') { flush(); mode = 'ul'; html += '<ul class="list-disc pl-5">'; }
+        html += `<li>${escapeHtml(ul[1])}</li>`; continue;
+      }
+      if (ol) {
+        if (mode !== 'ol') { flush(); mode = 'ol'; html += '<ol class="list-decimal pl-5">'; }
+        html += `<li>${escapeHtml(ol[2])}</li>`; continue;
+      }
+      if (line === '') { flush(); html += '<p></p>'; continue; }
+      flush(); html += `<p>${escapeHtml(line)}</p>`;
+    }
+    flush();
+    return html || '<p></p>';
+  }
 </script>
   
-  <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md space-y-6 transition-colors duration-150">
-    <div class="flex items-center justify-between">
-      <h3 class="text-lg font-semibold text-gray-700 dark:text-gray-200">Transcript</h3>
+  <div class="surface-card space-y-6">
+    <div class="title-stack">
+      <h3 class="text-lg font-semibold">Transcript</h3>
+      {#if audioSrc}
+        <audio bind:this={audioEl} controls src={audioSrc} class="w-full max-w-full" on:timeupdate={onAudioTimeUpdate}></audio>
+      {/if}
       <div class="flex items-center gap-2">
-        {#if audioSrc}
-          <audio bind:this={audioEl} controls src={audioSrc} class="h-8" on:timeupdate={onAudioTimeUpdate}></audio>
+        <button class="btn btn-ghost text-xs" on:click={() => showTranscript = !showTranscript}>{showTranscript ? 'Verberg transcript' : 'Toon transcript'}</button>
+        <a class="btn btn-ghost text-xs" href={finalJsonUrl} download>Download JSON</a>
+        {#if finalHtmlUrl}
+          <a class="btn btn-ghost text-xs" href={finalHtmlUrl} download>Download HTML</a>
         {/if}
-        <button class="text-sm px-2 py-1 rounded bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-100" on:click={() => showTranscript = !showTranscript}>
-        {showTranscript ? 'Verberg' : 'Toon'}
-        </button>
-        <button class="text-sm px-2 py-1 rounded bg-indigo-600 text-white" on:click={toggleEditor}>{showEditor ? 'Sluit editor' : 'Edit & Re‑analyze'}</button>
+        <button class="btn btn-soft text-xs" on:click={toggleEditor}>{showEditor ? 'Editor sluiten' : 'Edit & Re‑analyze'}</button>
       </div>
     </div>
     {#if showTranscript}
-      <div class="prose dark:prose-invert max-w-none" bind:this={containerEl} on:click={onTranscriptClick}>
+      <div
+        class="prose dark:prose-invert max-w-none"
+        bind:this={containerEl}
+        on:click={onTranscriptClick}
+        on:keydown={onTranscriptKeydown}
+        role="button"
+        tabindex="0"
+        aria-label="Transcript: klik of druk Enter/Spatie om naar woordtijd te springen"
+      >
         {@html transcriptHtml}
       </div>
     {/if}
   
-    <h3 class="text-lg font-semibold text-gray-700 dark:text-gray-200">Samenvatting</h3>
-    <pre class="bg-gray-100 dark:bg-gray-700 p-4 rounded overflow-x-auto text-sm">
-  {summaryText}
-    </pre>
+    <div class="flex items-center justify-between">
+      <h3 class="text-[1.05rem] font-semibold">Samenvatting</h3>
+      <button class="chip" aria-label="Copy summary" title="Copy" on:click={() => copyToClipboard(summaryText)}>
+        <CopyIcon size={16} />
+      </button>
+    </div>
+    <div class="surface-card rt">{@html toRichHtml(summaryText)}</div>
 
     {#if advanced}
       <div class="mt-4">
-        <h3 class="text-lg font-semibold text-gray-700 dark:text-gray-200">Advanced Analyse</h3>
+        <h3 class="text-lg font-semibold">Advanced Analyse</h3>
         {#each Object.entries(advanced) as [key, val] (key)}
           {#if typeof val === 'string' && val}
-            <details class="mt-2 bg-gray-100 dark:bg-gray-700 rounded">
-              <summary class="cursor-pointer px-3 py-2 text-sm font-medium text-gray-800 dark:text-gray-100">{key}</summary>
-              <pre class="px-3 py-2 text-sm whitespace-pre-wrap">{val}</pre>
+            <details class="mt-2 surface-card">
+              <summary class="cursor-pointer px-3 py-2 text-sm font-medium text-gray-800 dark:text-gray-100 flex items-center justify-between">
+                <span>{key}</span>
+                <button type="button" class="p-1.5 rounded-md bg-slate-700/60 hover:bg-slate-600 text-white" aria-label="Copy analysis" on:click={(e)=>{e.preventDefault();copyToClipboard(val);}}>
+                  <CopyIcon size={16} />
+                </button>
+              </summary>
+              <div class="px-3 py-2 text-sm rt">{@html toRichHtml(val)}</div>
             </details>
           {/if}
         {/each}
@@ -184,7 +252,6 @@
     {/if}
   </div>
   
-
 <style>
   :global(.highlight) {
     background-color: #2563eb;

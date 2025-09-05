@@ -20,15 +20,14 @@
   
   </script>
   
-  <div class="mb-4 bg-white dark:bg-gray-800 p-4 rounded-lg shadow-md transition-colors duration-150">
-    <div class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2" id="preset-label">
-      Processing Preset:
-    </div>
-    <div class="flex flex-wrap gap-2" role="group" aria-labelledby="preset-label">
+  <div class="surface-card">
+    <div class="section-title mb-2">2. Preset</div>
+    <div class="section-subtle mb-3">Kies de balans tussen snelheid en diepte.</div>
+    <div class="segmented" role="group" aria-labelledby="preset-label">
       {#each presets as preset (preset.key)}
         <button
           type="button"
-          class="{baseButtonClasses} {$selectedPreset === preset.key ? activeButtonClasses : inactiveButtonClasses}"
+          class=""
           aria-pressed={$selectedPreset === preset.key}
           on:click={() => selectPreset(preset.key)}
         >
@@ -37,11 +36,11 @@
       {/each}
     </div>
     {#if $selectedPreset === 'quick'}
-        <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Fastest processing, minimal analysis (summary only), name detection off.</p>
+        <p class="section-subtle mt-2">Snelste verwerking, minimale analyse (alleen samenvatting).</p>
     {:else if $selectedPreset === 'standard'}
-        <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Good balance of speed and quality, includes summary and tries name detection (default).</p>
+        <p class="section-subtle mt-2">Goede balans tussen snelheid en kwaliteit.</p>
     {:else if $selectedPreset === 'multi'}
-        <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">More accurate transcription, full advanced analysis (slower).</p>
+        <p class="section-subtle mt-2">Meest nauwkeurig, met uitgebreide analyses (langzamer).</p>
     {/if}
   </div>
   

@@ -1,8 +1,8 @@
 <script>
     import { configInfo, jobConfigOverrides, selectedPreset } from '../stores.js';
     import { onMount } from 'svelte';
-    import { getOllamaCatalog, pullOllamaModel, assignLlmModels } from '../api.js';
-    import { tick, onDestroy } from 'svelte';
+  import { getOllamaCatalog, pullOllamaModel, assignLlmModels } from '../api.js';
+  import { tick, onDestroy } from 'svelte';
   
     // Local state for accordion visibility (start collapsed)
     let transcriptionVisible = false;
@@ -106,6 +106,18 @@
     };
     // Temporary selected option per task (add via dropdown)
     let toAdd = {};
+
+    // --- Helpers for nested NER-by-language overrides ------------------------
+    function getNerLang(code) {
+      const m = $jobConfigOverrides?.hf_ner_models_by_lang || {};
+      return m[code] || '';
+    }
+    function updateNerLang(code, value) {
+      jobConfigOverrides.update(v => ({
+        ...(v||{}),
+        hf_ner_models_by_lang: { ...(v?.hf_ner_models_by_lang||{}), [code]: value }
+      }));
+    }
 
     function buildOptions(catalogArr, localArr) {
       const set = new Set([...(localArr || [])]);
@@ -263,19 +275,19 @@
   
   </script>
   
-  <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md transition-colors duration-150">
-    <h2 class="text-xl font-semibold mb-1 text-gray-700 dark:text-gray-200">2. Configure Pipeline (Advanced)</h2>
-    <p class="text-xs text-gray-500 dark:text-gray-400 mb-4">Select a preset (above) or expand sections below to customize.</p>
+  <div class="surface-card">
+    <h2 class="section-title">3. Configure Pipeline</h2>
+    <p class="section-subtle mb-4">Kies geavanceerde opties wanneer nodig. Alles is optioneel.</p>
   
     {#if !schema || Object.keys(schema).length === 0}
       <p class="text-gray-500 dark:text-gray-400 italic">Loading configuration options...</p>
     {:else}
       <div class="space-y-2">
   
-        <div class="border border-gray-200 dark:border-gray-700 rounded">
-          <button on:click={() => toggleSection('transcription')} aria-expanded={transcriptionVisible} aria-controls="transcription-panel" class="w-full flex justify-between items-center p-3 bg-gray-50 dark:bg-gray-700/50 hover:bg-gray-100 dark:hover:bg-gray-700/80 rounded-t {transcriptionVisible ? '' : 'rounded-b'} transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500">
-            <span class="font-medium text-gray-700 dark:text-gray-200">Transcription Settings</span>
-            <span class="text-gray-500 dark:text-gray-400 transform transition-transform {transcriptionVisible ? 'rotate-180' : ''}">▼</span>
+        <div class="border border-gray-200 dark:border-gray-700 rounded-lg">
+          <button on:click={() => toggleSection('transcription')} aria-expanded={transcriptionVisible} aria-controls="transcription-panel" class="w-full flex justify-between items-center px-4 py-3 bg-transparent hover:bg-gray-50 dark:hover:bg-gray-700/40 rounded-t-lg {transcriptionVisible ? '' : 'rounded-b-lg'} transition-colors">
+            <span class="font-medium">Transcription Settings</span>
+            <span class="muted transform transition-transform {transcriptionVisible ? 'rotate-180' : ''}">▼</span>
           </button>
           {#if transcriptionVisible}
             <div id="transcription-panel" class="p-4 space-y-4 border-t border-gray-200 dark:border-gray-700">
@@ -320,21 +332,59 @@
            {#if speakerVisible}
              <div id="speaker-panel" class="p-4 space-y-4 border-t border-gray-200 dark:border-gray-700">
                {#each Object.entries(schema) as [key, spec] (key)}
-                 {#if (key === 'pyannote_pipeline' || key === 'speaker_name_detection_enabled' || key === 'speaker_map_path') && editableTypes.includes(spec.type) && !excludedKeys.includes(key)}
-                   <div class="flex flex-col">
-                     <label for={key} class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{formatLabel(key)}</label>
-                     {#if spec.type === 'bool'}
-                       <div class="flex items-center mt-1"><input id={key} type="checkbox" bind:checked={$jobConfigOverrides[key]} class="h-4 w-4 text-indigo-600 border-gray-300 dark:border-gray-500 rounded focus:ring-indigo-500 bg-white dark:bg-gray-700"></div>
-                     {:else if spec.type === 'string'}
+                 {#if (key === 'pyannote_pipeline' || key === 'expected_speakers' || key === 'speaker_name_detection_enabled' || key === 'speaker_map_path' || key === 'name_detection_candidate_mode') && editableTypes.includes(spec.type) && !excludedKeys.includes(key)}
+                  <div class="flex flex-col">
+                    <label for={key} class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{formatLabel(key)}</label>
+                    {#if spec.type === 'bool'}
+                      <div class="flex items-center mt-1"><input id={key} type="checkbox" bind:checked={$jobConfigOverrides[key]} class="h-4 w-4 text-indigo-600 border-gray-300 dark:border-gray-500 rounded focus:ring-indigo-500 bg-white dark:bg-gray-700"></div>
+                    {:else if spec.type === 'string'}
                         <input id={key} type="text" bind:value={$jobConfigOverrides[key]} placeholder="Default: {spec.default ?? ''}" class="mt-1 block w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm placeholder-gray-400 dark:placeholder-gray-500">
-                     {/if}
-                     {#if spec.description} <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{spec.description}</p> {/if}
-                   </div>
-                 {/if}
+                    {:else if spec.type === 'enum'}
+                        <select id={key} bind:value={$jobConfigOverrides[key]} class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm appearance-none">
+                           {#each spec.options || [] as option (option)} <option value={option}>{option}</option> {/each}
+                        </select>
+                    {:else if spec.type === 'integer'}
+                        <input id={key} type="number" min="1" step="1" bind:value={$jobConfigOverrides[key]} placeholder="Default: {spec.default ?? ''}" class="mt-1 block w-40 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm placeholder-gray-400 dark:placeholder-gray-500">
+                    {/if}
+                    {#if spec.description} <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{spec.description}</p> {/if}
+                  </div>
+                {/if}
                {/each}
-             </div>
-           {/if}
-         </div>
+
+               <!-- Per-language HF-NER model overrides -->
+               <div class="pt-2 border-t border-gray-200 dark:border-gray-700">
+                 <div class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">HF‑NER models per language</div>
+                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                   <div class="flex flex-col">
+                     <label class="text-xs text-gray-500 dark:text-gray-400">English (en)</label>
+                     <input type="text" value={getNerLang('en')}
+                       on:input={(e)=>updateNerLang('en', e.target.value)}
+                       placeholder="dslim/bert-base-NER" class="mt-1 block w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-100 rounded-md px-2 py-1"/>
+                   </div>
+                   <div class="flex flex-col">
+                     <label class="text-xs text-gray-500 dark:text-gray-400">Nederlands (nl)</label>
+                     <input type="text" value={getNerLang('nl')}
+                       on:input={(e)=>updateNerLang('nl', e.target.value)}
+                       placeholder="GroNLP/bert-base-dutch-cased" class="mt-1 block w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-100 rounded-md px-2 py-1"/>
+                   </div>
+                   <div class="flex flex-col">
+                     <label class="text-xs text-gray-500 dark:text-gray-400">Français (fr)</label>
+                     <input type="text" value={getNerLang('fr')}
+                       on:input={(e)=>updateNerLang('fr', e.target.value)}
+                       placeholder="Jean-Baptiste/camembert-ner" class="mt-1 block w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-100 rounded-md px-2 py-1"/>
+                   </div>
+                   <div class="flex flex-col">
+                     <label class="text-xs text-gray-500 dark:text-gray-400">Deutsch (de)</label>
+                     <input type="text" value={getNerLang('de')}
+                       on:input={(e)=>updateNerLang('de', e.target.value)}
+                       placeholder="dbmdz/bert-base-german-…" class="mt-1 block w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-100 rounded-md px-2 py-1"/>
+                   </div>
+                 </div>
+                 <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Laat leeg om te fallbacken op het algemene NER‑model.</p>
+               </div>
+            </div>
+          {/if}
+        </div>
   
         <div class="border border-gray-200 dark:border-gray-700 rounded">
            <button on:click={() => toggleSection('analysis')} aria-expanded={analysisVisible} aria-controls="analysis-panel" class="w-full flex justify-between items-center p-3 bg-gray-50 dark:bg-gray-700/50 hover:bg-gray-100 dark:hover:bg-gray-700/80 rounded-t {analysisVisible ? '' : 'rounded-b'} transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500">
@@ -393,7 +443,7 @@
                                {#if (localModels || []).includes(item.name)}
                                  <span class="text-xs px-2 py-1 rounded bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300">Installed</span>
                                {:else}
-                                 <button class="text-xs px-2 py-1 rounded bg-blue-600 text-white" on:click={() => pullModel(item.name)} disabled={modelLoading}>Pull</button>
+                                 <button class="btn btn-primary text-xs px-2 py-1" on:click={() => pullModel(item.name)} disabled={modelLoading}>Pull</button>
                                {/if}
                              </div>
                            </div>
@@ -429,12 +479,12 @@
                                  <option value={opt.value}>{opt.label}{recommended[t] === opt.value ? ' — recommended' : ''}</option>
                                {/each}
                              </select>
-                             <button class="text-sm px-2 py-1 rounded bg-indigo-600 text-white" on:click={() => addModel(t)}>Add</button>
+                             <button class="btn btn-primary text-sm px-2 py-1" on:click={() => addModel(t)}>Add</button>
                            </div>
                          </div>
                        {/each}
                        <div class="pt-2">
-                         <button class="px-3 py-1 rounded bg-indigo-600 text-white" on:click={saveModelAssignments} disabled={modelLoading}>Opslaan in config.yaml</button>
+                         <button class="btn btn-primary px-3 py-1" on:click={saveModelAssignments} disabled={modelLoading}>Opslaan in config.yaml</button>
                        </div>
                      </div>
                    </div>

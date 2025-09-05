@@ -70,8 +70,11 @@
       }
     }
   }
-
-  $: cacheSuffix = $currentJob.job_id ? `?v=${$currentJob.job_id}` : '';
+  // Force refetch of static result files when a job completes or re‑analyzes
+  let _lastStatusForRev = null;
+  let _lastSummaryPath = null;
+  let _resourceRev = 0;
+  $: cacheSuffix = $currentJob.job_id ? `?v=${$currentJob.job_id}-${_resourceRev}` : '';
 
   async function startPipelineAction() {
     if (!canStart) return;
@@ -134,6 +137,15 @@
           currentJob.patch({ status: 'POLLING_FAILED', error_message: 'Job data not found during poll.' });
           return;
       }
+      // Track transitions to bump resource revision when final artifacts change
+      const nextStatus = data.status;
+      const nextSummaryPath = data?.result?.summary_path;
+      if (nextStatus === 'COMPLETED' && (_lastStatusForRev !== 'COMPLETED' || nextSummaryPath !== _lastSummaryPath)) {
+        _resourceRev += 1; // force cache-busting for ResultViewer paths
+      }
+      _lastStatusForRev = nextStatus;
+      _lastSummaryPath = nextSummaryPath;
+
       currentJob.patch({
         status:       data.status,
         progress:     data.progress     ?? $currentJob.progress,
@@ -226,39 +238,21 @@
   });
 </script>
 
-<div class="p-6 bg-white dark:bg-gray-800 rounded-lg shadow-md transition-colors duration-150 space-y-4">
-  <h2 class="text-xl font-semibold text-gray-700 dark:text-gray-200">
-    3. Run Pipeline & View Status
-  </h2>
+<div class="surface-card space-y-4">
+  <h2 class="section-title">4. Run & Status</h2>
 
-  <div class="flex gap-3">
-    <button
-      on:click={startPipelineAction}
-      disabled={!canStart}
-      class="px-5 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 transition-colors dark:bg-green-500 dark:hover:bg-green-600"
-    >
-      Start Pipeline
-    </button>
-    <button
-      on:click={stopPipelineAction}
-      disabled={!canStop}
-      class="px-5 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 transition-colors dark:bg-red-500 dark:hover:bg-red-600"
-    >
-      Stop Pipeline
-    </button>
-    <button
-      on:click={newRun}
-      class="px-5 py-2 bg-slate-500 text-white rounded-md hover:bg-slate-600 transition-colors dark:bg-slate-600 dark:hover:bg-slate-500"
-      title="Reset de UI en start een nieuwe run zonder reload (behoudt geüploade audio en instellingen)"
-    >
-      New Run
-    </button>
+  <div class="flex flex-wrap items-center gap-2">
+    <button on:click={startPipelineAction} disabled={!canStart} class="btn btn-primary">Start Pipeline</button>
+    {#if canStop}
+      <button on:click={stopPipelineAction} class="btn btn-danger">Stop</button>
+    {/if}
+    <button on:click={newRun} class="btn btn-ghost" title="Reset UI zonder audio te verliezen">Nieuwe run</button>
   </div>
 
   {#if $currentJob.job_id}
-    <div class="mt-4 p-4 bg-gray-100 dark:bg-gray-700 rounded-lg space-y-3">
+    <div class="mt-2 p-4 rounded-lg border" style="border-color: rgb(var(--border)); background-color: rgb(var(--page));">
       <div class="flex justify-between items-center">
-        <span class="text-gray-700 dark:text-gray-200">
+        <span>
           Status: <strong>{$currentJob.status}</strong>
         </span>
         {#if !isTerminal($currentJob.status) && !isReviewing && pollInterval}
@@ -288,12 +282,10 @@
 
       {#if $currentJob.logs && $currentJob.logs.length}
         <div>
-          <h4 class="font-semibold text-gray-700 dark:text-gray-200 mb-1">
+          <h4 class="font-semibold mb-1">
             Job Logs
           </h4>
-          <div
-            class="bg-gray-200 dark:bg-gray-600 p-3 rounded h-32 overflow-y-auto text-xs font-mono text-gray-800 dark:text-gray-100"
-          >
+          <div class="p-3 rounded h-32 overflow-y-auto text-xs font-mono" style="background: rgba(148,163,184,0.15);">
             {#each $currentJob.logs as entry (entry[0] + entry[2])}  <p>{formatLogEntry(entry)}</p>
             {/each}
           </div>

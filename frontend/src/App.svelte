@@ -58,16 +58,17 @@
   });
 </script>
 
-<main class="container mx-auto p-4 sm:p-8 max-w-4xl min-h-screen">
-  <div class="flex justify-between items-center mb-8">
-    <h1 class="text-2xl sm:text-3xl font-bold text-indigo-700 dark:text-indigo-400">
-      Transcriber App
-    </h1>
+<main class="app-page min-h-screen">
+  <header class="flex items-center justify-between mb-6 sm:mb-8">
+    <div class="title-stack">
+      <h1 class="section-title">Transcriber App</h1>
+      <p class="section-subtle">Upload audio, maak automatisch een transcript en ontvang een duidelijke samenvatting en inzichten.</p>
+    </div>
     <div class="flex items-center gap-3">
       <HealthIndicator />
       <ThemeToggle />
     </div>
-  </div>
+  </header>
 
   {#if errorLoadingConfig}
     <div

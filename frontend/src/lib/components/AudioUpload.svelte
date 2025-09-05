@@ -62,10 +62,9 @@
   });
 </script>
 
-<div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md transition-colors duration-150">
-  <h2 class="text-xl font-semibold mb-4 text-gray-700 dark:text-gray-200">
-    1. Upload Audio File
-  </h2>
+<div class="surface-card">
+  <h2 class="section-title">1. Upload Audio</h2>
+  <p class="section-subtle mb-4">Kies een audio‑bestand en start daarna de pipeline.</p>
 
   <div class="flex flex-col sm:flex-row items-center gap-4">
     <input
@@ -83,14 +82,7 @@
       disabled={uploadStatus === 'uploading'}
     />
 
-    <button
-      on:click={handleUpload}
-      disabled={!selectedFile || uploadStatus === 'uploading'}
-      class="px-5 py-2 bg-indigo-600 text-white rounded-md shadow-sm hover:bg-indigo-700
-             dark:bg-indigo-500 dark:hover:bg-indigo-600
-             disabled:opacity-50 disabled:cursor-not-allowed
-             whitespace-nowrap transition-colors duration-150"
-    >
+    <button on:click={handleUpload} disabled={!selectedFile || uploadStatus === 'uploading'} class="btn btn-primary whitespace-nowrap">
       {#if uploadStatus === 'uploading'}
         <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white inline"
              xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -109,13 +101,11 @@
   </div>
 
   {#if statusMessage}
-    <p class="mt-4 text-sm min-h-[1.25em]
+    <p class="mt-3 text-sm min-h-[1.25em]
       {uploadStatus === 'success' ? 'text-green-600 dark:text-green-400' : ''}
       {uploadStatus === 'error'   ? 'text-red-600 dark:text-red-400'     : ''}
       {uploadStatus === 'uploading'? 'text-blue-600 dark:text-blue-400'   : ''}
-      {uploadStatus === 'idle'     && selectedFile
-        ? 'text-gray-600 dark:text-gray-400'
-        : ''}"
+      {uploadStatus === 'idle'     && selectedFile ? 'muted' : ''}"
     >
       {statusMessage}
     </p>

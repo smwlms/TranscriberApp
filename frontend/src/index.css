@@ -1,27 +1,132 @@
 /* src/index.css */
 
-/* Import Tailwind's base styles, component classes, and utility classes */
+/* Tailwind layers */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Define global base styles, including dark mode variants */
+/* Design tokens (soft, neutral palette) */
+:root {
+  --bg:            247 247 245;  /* warm gray-50 */
+  --page:          255 255 255;  /* white */
+  --text:          17 24 39;     /* slate-900 */
+  --muted:         100 116 139;  /* slate-500 */
+  --border:        226 232 240;  /* slate-200 */
+  /* Softer, neutral primary (blue‑gray) */
+  --accent:        71 85 105;    /* slate-600 */
+  --accent-soft:   241 245 249;  /* slate-100 */
+  --shadow:        15 23 42;     /* slate-900 */
+}
+.dark {
+  --bg:            15 23 42;   /* slate-900 */
+  --page:          30 41 59;   /* slate-800 */
+  --text:          226 232 240;/* slate-200 */
+  --muted:         148 163 184;/* slate-400 */
+  --border:        51 65 85;   /* slate-700 */
+  /* Keep neutral primary also in dark for consistency/contrast */
+  --accent:        71 85 105;   /* slate-600 */
+  --accent-soft:   30 41 59;    /* slate-800 */
+  --shadow:        2 6 23;      /* slate-950 */
+}
+
+/* Global base styles */
+html, body {
+  height: 100%;
+}
 body {
-  @apply bg-gray-50 text-gray-900           /* Default light mode styles */
-         dark:bg-slate-900 dark:text-slate-100  /* Dark mode overrides */
-         transition-colors duration-150        /* Smooth transition between modes */
-         font-sans                             /* Apply default sans-serif font */
-         antialiased;                          /* Improve font rendering */
+  background-color: rgb(var(--bg));
+  color: rgb(var(--text));
+  @apply transition-colors duration-200 font-sans antialiased;
 }
 
-/* Optional: Add other global styles or overrides below */
-/* Example: Consistent link styling
-a {
-  @apply text-indigo-600 dark:text-indigo-400 hover:underline;
+/* Page container */
+.app-page {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 1.25rem; /* 5 */
 }
-*/
+@media (min-width: 640px) {
+  .app-page { padding: 2rem; }
+}
 
-/* Example: Ensure buttons have a consistent default focus ring
-button:focus-visible {
-  @apply ring-2 ring-offset-2 ring-indigo-500 dark:ring-offset-gray-900;
-} */
+/* Card / block */
+.surface-card {
+  background-color: rgb(var(--page));
+  border: 1px solid rgb(var(--border));
+  border-radius: 14px;
+  box-shadow: 0 1px 1px rgba(var(--shadow), 0.02), 0 8px 24px rgba(var(--shadow), 0.06);
+  @apply p-5 sm:p-6;
+}
+
+/* Section heading */
+.section-title {
+  @apply text-2xl font-semibold tracking-tight mb-2;
+}
+.section-subtle {
+  color: rgb(var(--muted));
+  @apply text-sm;
+}
+
+/* Buttons */
+.btn { @apply inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1; }
+.btn-primary { background-color: rgb(var(--accent)); color: #fff; @apply hover:brightness-105 focus:ring-offset-gray-100 dark:focus:ring-offset-slate-900 focus:ring-indigo-400; }
+.btn-soft { background-color: rgb(var(--accent-soft)); color: rgb(var(--accent)); @apply hover:brightness-105; }
+.btn-ghost { background: transparent; color: rgb(var(--muted)); @apply hover:bg-gray-100/60 dark:hover:bg-slate-700/60; }
+.btn-danger { @apply bg-red-600 text-white hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600; }
+.btn-link { @apply text-indigo-600 dark:text-indigo-400 hover:underline px-0 py-0; }
+.btn[disabled] { @apply opacity-60 cursor-not-allowed; }
+
+/* Segmented control */
+.segmented {
+  @apply inline-flex items-center rounded-lg border px-1 py-1 gap-1;
+  border-color: rgb(var(--border));
+  background-color: rgb(var(--page));
+}
+.segmented > button {
+  @apply px-3 py-1.5 text-sm rounded-md;
+}
+.segmented > button[aria-pressed="true"] { background-color: rgb(var(--accent)); color: #fff; }
+.segmented > button[aria-pressed="false"] {
+  color: rgb(var(--muted));
+}
+
+/* Small toolbar chip */
+.chip {
+  @apply inline-flex items-center gap-2 px-2.5 py-1 text-xs rounded-md border;
+  border-color: rgb(var(--border));
+  background-color: rgb(var(--page));
+}
+
+/* Prose tweaks for transcript */
+.prose p { @apply my-2; }
+.prose h1, .prose h2, .prose h3 { @apply mt-4 mb-2; }
+/* Never horizontal scroll in rich content */
+.rt, .rt p, .rt ul, .rt ol, .rt pre, .rt code { word-break: break-word; overflow-wrap: anywhere; }
+.rt pre { white-space: pre-wrap; background: transparent; padding: 0; }
+.surface-card pre { white-space: pre-wrap; word-break: break-word; overflow-x: hidden; }
+
+/* Audio/player spacing fix near title */
+.title-stack { @apply flex flex-col gap-3; }
+
+/* Utility: subtle label color */
+.muted { color: rgb(var(--muted)); }
+
+/* Form element visibility and focus (thicker, clearer borders) */
+.surface-card input[type="text"],
+.surface-card input[type="number"],
+.surface-card input[type="email"],
+.surface-card input[type="search"],
+.surface-card select,
+.surface-card textarea {
+  border: 1.5px solid rgb(var(--border));
+  background-color: rgb(var(--page));
+  color: rgb(var(--text));
+  border-radius: 8px;
+}
+.surface-card input:focus,
+.surface-card select:focus,
+.surface-card textarea:focus {
+  outline: none;
+  border-color: rgb(var(--accent));
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.20); /* soft focus ring */
+}
