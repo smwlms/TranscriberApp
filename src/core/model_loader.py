@@ -12,6 +12,17 @@ from typing import Optional, Tuple, Any
 
 from src.utils.log import log
 
+
+def resolve_compute_type(requested: Optional[str], device: Optional[str]) -> str:
+    """Return a compute type that is supported on the given device."""
+    req = (requested or "int8").strip().lower()
+    dev = (device or "").strip().lower()
+
+    if dev in {"mps", "cpu"} and req not in {"int8", "int8_float16"}:
+        return "int8"
+
+    return req
+
 # Default pipeline name closely related to model loading
 DEFAULT_PYANNOTE_PIPELINE = "pyannote/speaker-diarization-3.1"
 
@@ -98,32 +109,65 @@ def load_models(
         return None, None
 
     # Determine device
-    target_device = compute_device or get_compute_device()
+    device = (compute_device or get_compute_device()).lower()
     log(
-        f"Attempting to load models (Whisper: {whisper_model_size}, Pyannote: {pyannote_pipeline_name}) on device '{target_device}'...",
+        f"Attempting to load models (Whisper: {whisper_model_size}, Pyannote: {pyannote_pipeline_name}) on device '{device}'...",
         "INFO",
     )
 
     try:
         # Torch device for Pyannote
         try:
-            pyannote_torch_device = torch.device(target_device)
+            pyannote_torch_device = torch.device(device or "cpu")
         except Exception as torch_err:
             log(
-                f"Invalid compute device '{target_device}' for PyTorch: {torch_err}. Falling back to 'cpu'.",
+                f"Invalid compute device '{device}' for PyTorch: {torch_err}. Falling back to 'cpu'.",
                 "WARNING",
             )
             pyannote_torch_device = torch.device("cpu")
 
         # Load FasterWhisper
+        requested_compute_type = str(compute_type or "int8")
+        effective_compute_type = resolve_compute_type(requested_compute_type, device)
+        if effective_compute_type != requested_compute_type.lower():
+            log(
+                f"Compute-type '{requested_compute_type}' niet ondersteund op {device}, terug naar '{effective_compute_type}'.",
+                "WARNING",
+            )
+        else:
+            log(
+                f"Compute-type '{requested_compute_type}' bevestigd voor {device}.",
+                "DEBUG",
+            )
         log(
-            f"Loading Whisper model '{whisper_model_size}' (Compute: {compute_type})...",
+            f"Loading Whisper model '{whisper_model_size}' (Compute: {effective_compute_type})...",
             "DEBUG",
         )
-        whisper_device_arg = "auto" if target_device == "mps" else target_device
-        whisper_model = WhisperModel(
-            whisper_model_size, device=whisper_device_arg, compute_type=compute_type
-        )
+        compute_type = effective_compute_type
+        whisper_device_arg = "auto" if device == "mps" else device
+        try:
+            whisper_model = WhisperModel(
+                whisper_model_size, device=whisper_device_arg, compute_type=effective_compute_type
+            )
+        except ValueError as whisper_err:
+            err_text = str(whisper_err).lower()
+            if (
+                device in {"mps", "cpu"}
+                and effective_compute_type != "int8"
+                and ("float16" in err_text or "bfloat16" in err_text)
+            ):
+                fallback_type = "int8"
+                log(
+                    f"Compute-type '{effective_compute_type}' werd geweigerd door backend op {device}; probeer opnieuw met '{fallback_type}'.",
+                    "WARNING",
+                )
+                whisper_model = WhisperModel(
+                    whisper_model_size, device=whisper_device_arg, compute_type=fallback_type
+                )
+                compute_type = fallback_type
+                effective_compute_type = fallback_type
+            else:
+                raise
         log("Whisper model loaded successfully.", "SUCCESS")
 
         # Load Pyannote pipeline
@@ -137,9 +181,19 @@ def load_models(
         diarization_pipeline = PyannotePipeline.from_pretrained(
             pyannote_pipeline_name, **auth_token_arg
         )
-        diarization_pipeline.to(pyannote_torch_device)
+        pyannote_actual_device = pyannote_torch_device
+        try:
+            if device == "mps":
+                diarization_pipeline.to(torch.device("cpu"))
+                pyannote_actual_device = torch.device("cpu")
+                log("Pyannote pipeline gedwongen naar CPU voor stabiliteit op MPS.", "INFO")
+            else:
+                diarization_pipeline.to(pyannote_torch_device)
+                pyannote_actual_device = pyannote_torch_device
+        except Exception as move_err:
+            log(f"Kon pyannote pipeline niet verplaatsen: {move_err}", "WARNING")
         log(
-            f"Pyannote pipeline loaded and moved onto device '{pyannote_torch_device}'.",
+            f"Pyannote pipeline loaded and moved onto device '{pyannote_actual_device}'.",
             "SUCCESS",
         )
         return whisper_model, diarization_pipeline

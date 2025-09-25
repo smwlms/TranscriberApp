@@ -1,7 +1,8 @@
 <script>
-  import { onMount, onDestroy, createEventDispatcher } from 'svelte';
+  import { onMount, onDestroy, createEventDispatcher, tick } from 'svelte';
   import { get } from 'svelte/store'; // CORRECTED IMPORT
   import { apiBaseUrl } from '../stores.js';
+  import contextDefaults from '../config/context_defaults.json';
   import {
     getReviewData as apiGetReviewData,
     updateTranscriptData,
@@ -23,6 +24,7 @@
   let nameEvidence = {};
   let contextNamesDetected = [];
   let extraContext = '';
+  let contextTermList = [];
   let uniqueSpeakers = [];
   let editedMap = {};
   let contextVisible = {};
@@ -30,6 +32,8 @@
   let greetingCache = [];
   let rolesHint = {};
   let firstSpeakerId = null;
+  let lastSavedTexts = [];
+  let improvements = [];
 
   // --- Speaker assist features ---
   let expectedSpeakers = 2; // adjustable in UI
@@ -41,18 +45,546 @@
   const SPEAKER_COLORS = ['#93c5fd','#fca5a5','#86efac','#fcd34d','#f9a8d4','#a7f3d0','#fbbf24','#c4b5fd','#fda4af','#99f6e4'];
   function colorForSpeaker(sid){ const idx = uniqueSpeakers.indexOf(sid); return SPEAKER_COLORS[(idx>=0?idx:0)%SPEAKER_COLORS.length]; }
 
+  let contextStopwords = new Set();
+  let knownCorrections = new Map();
+
+  function mergeContextStopwords(words){
+    const source = Array.isArray(words)
+      ? words
+      : words instanceof Set
+        ? Array.from(words)
+        : [];
+    if (!source.length) return;
+    const normalized = source
+      .map((word) => (word ?? '').toString().trim().toLowerCase())
+      .filter(Boolean);
+    if (!normalized.length) return;
+    contextStopwords = new Set([...contextStopwords, ...normalized]);
+  }
+
+  function mergeKnownCorrections(corrections){
+    if (!corrections) return;
+    const pairs = Array.isArray(corrections)
+      ? corrections
+      : corrections instanceof Map
+        ? Array.from(corrections.entries())
+        : typeof corrections === 'object'
+          ? Object.entries(corrections)
+          : [];
+    if (!pairs.length) return;
+    const next = new Map(knownCorrections);
+    pairs.forEach(([candidate, correction]) => {
+      const key = (candidate ?? '').toString().trim().toLowerCase();
+      const value = (correction ?? '').toString().trim();
+      if (!key || !value) return;
+      next.set(key, correction);
+    });
+    knownCorrections = next;
+  }
+
+  mergeContextStopwords(contextDefaults?.stopwords || []);
+  mergeKnownCorrections(contextDefaults?.knownCorrections || {});
+
+  function addTermToBucket(term, bucket, { force = false, titleCaseFallback = false, keepFull = false } = {}, stopwords = contextStopwords){
+    if (!term || typeof term !== 'string') return;
+    const trimmed = term.trim();
+    if (!trimmed) return;
+    if (keepFull){
+      const fullClean = trimmed.replace(/^[^A-Za-zÀ-ÖØ-öø-ÿ]+|[^A-Za-zÀ-ÖØ-öø-ÿ]+$/g, '');
+      const lowered = fullClean.toLowerCase();
+      if (fullClean && !stopwords.has(lowered)){
+        bucket.add(titleCaseFallback ? fullClean.charAt(0).toUpperCase() + fullClean.slice(1) : fullClean);
+      }
+    }
+    const fragments = trimmed.split(/[\s\/]+/);
+    for (const fragment of fragments){
+      const cleaned = fragment.replace(/^[^A-Za-zÀ-ÖØ-öø-ÿ]+|[^A-Za-zÀ-ÖØ-öø-ÿ]+$/g, '');
+      const lower = cleaned.toLowerCase();
+      if (!cleaned) continue;
+      if (stopwords.has(lower)) continue;
+      if (!force && cleaned.length < 4) continue;
+      let finalToken = cleaned;
+      if (titleCaseFallback && /^[a-z]/.test(cleaned)) {
+        finalToken = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+      }
+      bucket.add(finalToken);
+    }
+  }
+
+  function deriveContextTerms(extraCtx, contextNames, proposedMapState, currentMapState, stopwords = contextStopwords){
+    const bucket = new Set();
+    if (Array.isArray(contextNames)) contextNames.forEach((name) => addTermToBucket(name, bucket, { force: true, keepFull: true }, stopwords));
+    if (proposedMapState && typeof proposedMapState === 'object'){
+      Object.values(proposedMapState).forEach((entry) => addTermToBucket(entry?.name, bucket, { force: true, keepFull: true }, stopwords));
+    }
+    if (currentMapState && typeof currentMapState === 'object'){
+      Object.values(currentMapState).forEach((value) => addTermToBucket(value, bucket, { force: true, keepFull: true }, stopwords));
+    }
+    if (typeof extraCtx === 'string' && extraCtx.trim()){
+      const matches = extraCtx.match(/[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]{2,}(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'\-]{2,})*/g);
+      if (matches) matches.forEach((token) => addTermToBucket(token, bucket, { titleCaseFallback: true, keepFull: true }, stopwords));
+    }
+    return Array.from(bucket);
+  }
+
+  function buildImprovementsFromTranscript(ts){
+    if (!Array.isArray(ts)) return [];
+    const list = [];
+    ts.forEach((seg, i) => {
+      if (!seg) return;
+      const words = Array.isArray(seg.words) ? seg.words : [];
+      words.forEach((w, j) => {
+        if (!w) return;
+        const raw = (w.word ?? '').toString();
+        const suggestion = (w.corrected ?? '').toString();
+        if (suggestion && suggestion !== raw){
+          list.push({
+            segment: i,
+            word: j,
+            speaker: seg.speaker,
+            from: raw,
+            to: suggestion,
+            flags: w.flags || {},
+            start: w.start,
+            end: w.end,
+          });
+        }
+      });
+    });
+    return list;
+  }
+
+  function refreshImprovements(){
+    improvements = buildImprovementsFromTranscript(transcript).filter((item) => {
+      return !(item?.flags && item.flags.confirmed === true);
+    });
+  }
+
+  function focusImprovement(item){
+    if (!item) return;
+    const el = document.getElementById(`w-${item.segment}-${item.word}`);
+    if (el){
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('pulse');
+      setTimeout(() => el.classList.remove('pulse'), 900);
+      if (typeof item.start === 'number') {
+        seekAudioTo(item.start);
+      }
+    }
+  }
+
+  function normalizeTranslationsArray(arr, targetLen){
+    if (!Number.isInteger(targetLen) || targetLen <= 0) return [];
+    if (!Array.isArray(arr)) return new Array(targetLen).fill('');
+    const out = arr.slice(0, targetLen);
+    while (out.length < targetLen) out.push('');
+    return out;
+  }
+
+  function normalizeTokenForContext(value){
+    if (!value) return '';
+    return value
+      .toString()
+      .toLowerCase()
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]/g, '');
+  }
+
+  function levenshtein(a, b){
+    if (a === b) return 0;
+    const m = a.length;
+    const n = b.length;
+    if (!m) return n;
+    if (!n) return m;
+    const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+    for (let i = 0; i <= m; i++) dp[i][0] = i;
+    for (let j = 0; j <= n; j++) dp[0][j] = j;
+    for (let i = 1; i <= m; i++){
+      for (let j = 1; j <= n; j++){
+        const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        dp[i][j] = Math.min(
+          dp[i - 1][j] + 1,
+          dp[i][j - 1] + 1,
+          dp[i - 1][j - 1] + cost
+        );
+      }
+    }
+    return dp[m][n];
+  }
+
+  function maxEditFor(length){
+    if (length <= 3) return 0;
+    if (length <= 6) return 1;
+    if (length <= 10) return 2;
+    return 3;
+  }
+
+  function skeletonDistance(a, b){
+    const collapse = (value) => normalizeTokenForContext(value)
+      .replace(/[aeiou]/g, '')
+      .replace(/(.)\1+/g, '$1');
+    return levenshtein(collapse(a), collapse(b));
+  }
+
+  async function confirmImprovement(item){
+    if (!item) return;
+    const seg = transcript[item.segment];
+    const words = Array.isArray(seg?.words) ? seg.words.slice() : null;
+    if (!words || !words[item.word]) return;
+    const baseWord = words[item.word];
+    const updatedWord = {
+      ...baseWord,
+      flags: { ...(baseWord.flags || {}), confirmed: true }
+    };
+    words[item.word] = updatedWord;
+    applyTranscriptWordChange(item.segment, words);
+    hasCorrectionEdits = true;
+    editorDirtyIndices.add(item.segment);
+    improvements = improvements.filter(({ segment, word }) => segment !== item.segment || word !== item.word);
+    refreshImprovements();
+    await enqueueTranslations([item.segment]);
+  }
+
+  async function rejectImprovement(item){
+    if (!item) return;
+    const seg = transcript[item.segment];
+    const words = Array.isArray(seg?.words) ? seg.words.slice() : null;
+    if (!words || !words[item.word]) return;
+    const current = words[item.word];
+    const nextFlags = { ...(current.flags || {}) };
+    delete nextFlags.suggestedByContext;
+    delete nextFlags.confirmed;
+    const updatedWord = { ...current };
+    delete updatedWord.corrected;
+    if (Object.keys(nextFlags).length) updatedWord.flags = nextFlags; else delete updatedWord.flags;
+    words[item.word] = updatedWord;
+    applyTranscriptWordChange(item.segment, words);
+    hasCorrectionEdits = true;
+    editorDirtyIndices.add(item.segment);
+    improvements = improvements.filter(({ segment, word }) => segment !== item.segment || word !== item.word);
+    refreshImprovements();
+    await enqueueTranslations([item.segment]);
+  }
+
+  function adjustCaseFromContext(original, suggestion){
+    if (!suggestion) return suggestion;
+    if (!original) return suggestion;
+    if (original === original.toUpperCase()) return suggestion.toUpperCase();
+    if (original === original.toLowerCase()) return suggestion.toLowerCase();
+    if (/^[A-Z]/.test(original) && !/^[A-Z]/.test(suggestion)){
+      return suggestion.charAt(0).toUpperCase() + suggestion.slice(1);
+    }
+    return suggestion;
+  }
+
+  function mergePunctuationFromContext(original, suggestion){
+    if (!suggestion) return suggestion;
+    const leading = original.match(/^["'“”‘’\(\[]+/);
+    const trailing = original.match(/["'“”‘’\)\]\.,;:!?]+$/);
+    let result = suggestion;
+    if (leading) result = leading[0] + result;
+    if (trailing) result = result + trailing[0];
+    return result;
+  }
+
+  function buildNeighborHints(terms){
+    const map = new Map();
+    if (!Array.isArray(terms)) return map;
+    terms.forEach((term) => {
+      if (!term || typeof term !== 'string') return;
+      const fragments = term
+        .split(/\s+/)
+        .map((piece) => normalizeTokenForContext(piece))
+        .filter(Boolean);
+      fragments.forEach((frag, idx) => {
+        if (!frag) return;
+        const bucket = map.get(frag) || new Set();
+        if (idx > 0 && fragments[idx - 1]) bucket.add(fragments[idx - 1]);
+        if (idx < fragments.length - 1 && fragments[idx + 1]) bucket.add(fragments[idx + 1]);
+        map.set(frag, bucket);
+      });
+    });
+    return map;
+  }
+
+  function applyContextCorrectionsToTranscript(ts, terms){
+    // Adaptieve Levenshtein, fonetisch skeleton en neighbor hints voor context-gebaseerde autocorrectie.
+    if (!Array.isArray(ts) || !Array.isArray(terms) || !terms.length) return;
+    const candidates = terms
+      .map((raw) => ({ raw, norm: normalizeTokenForContext(raw) }))
+      .filter((cand) => cand.norm && cand.norm.length >= 4)
+      .sort((a, b) => b.norm.length - a.norm.length);
+
+    const neighborHints = buildNeighborHints(terms);
+
+    ts.forEach((seg) => {
+      if (!seg || !Array.isArray(seg.words)) return;
+      seg.words.forEach((word, idx) => {
+        const original = (word?.word ?? '').toString();
+        const normWord = normalizeTokenForContext(original);
+        if (!normWord) return;
+        if (word?.flags?.manualEdit) return;
+        if (typeof word?.corrected === 'string' && word.corrected && word.corrected !== original) return;
+
+        const manualFix = knownCorrections.get(normWord);
+        if (manualFix) {
+          const adjusted = adjustCaseFromContext(original, manualFix);
+          const merged = mergePunctuationFromContext(original, adjusted);
+          if (merged && merged !== original){
+            const updatedFlags = { ...(word.flags || {}), suggestedByContext: true };
+            seg.words[idx] = {
+              ...word,
+              corrected: merged,
+              flags: updatedFlags,
+            };
+          }
+          return;
+        }
+
+        const originalAllLower = original === original.toLowerCase();
+        const maxDist = maxEditFor(normWord.length);
+        if (normWord.length <= 2) return; // never auto-correct very short tokens
+
+        const prevToken = idx>0 ? (seg.words[idx-1]?.corrected || seg.words[idx-1]?.word || '').toString() : '';
+        const nextToken = idx<seg.words.length-1 ? (seg.words[idx+1]?.corrected || seg.words[idx+1]?.word || '').toString() : '';
+        const prevNorm = normalizeTokenForContext(prevToken);
+        const nextNorm = normalizeTokenForContext(nextToken);
+
+        let best = null; // { candidate, effective }
+
+        for (const cand of candidates){
+          const candidateLooksName = /^[A-Z][a-zÀ-ÖØ-öø-ÿ'-]*$/.test(cand.raw);
+          const candidateIsProbablyPerson = candidateLooksName && (cand.raw.length <= 7);
+          if (originalAllLower && candidateIsProbablyPerson) continue;
+          if (cand.norm === 'realo' && normWord.length <= 4 && normWord !== 'realo') continue;
+
+          const distance = levenshtein(normWord, cand.norm);
+          let effective = distance;
+
+          const neighbors = neighborHints.get(cand.norm);
+          if (neighbors && (neighbors.has(prevNorm) || neighbors.has(nextNorm))) {
+            effective = Math.max(0, effective - 1);
+          }
+
+          const lengthGap = Math.abs(normWord.length - cand.norm.length);
+          if (lengthGap > 3) continue;
+
+          const skelOk = normWord.length > 3 && cand.norm.length > 3 && skeletonDistance(normWord, cand.norm) <= 2;
+
+          if (normWord.length <= 3 && effective > 0) continue;
+
+          if (effective <= maxDist || skelOk) {
+            if (!best || effective < best.effective || (effective === best.effective && cand.norm.length > best.candidate.norm.length)){
+              best = { candidate: cand, effective };
+            }
+          }
+        }
+
+        if (best){
+          const adjusted = adjustCaseFromContext(original, best.candidate.raw);
+          const merged = mergePunctuationFromContext(original, adjusted);
+          if (merged && merged !== original){
+            const updatedFlags = { ...(word.flags || {}), suggestedByContext: true };
+            seg.words[idx] = {
+              ...word,
+              corrected: merged,
+              flags: updatedFlags,
+            };
+          }
+        }
+      });
+    });
+  }
+
   // Consolidation hints state
   let consolidationHints = [];
 
   let isEditingTranscript = false;
   let editedTranscript = {};
   let transcriptContainer; // scroll control when toggling editor
+  // Transcript Editor integration
+  import TranscriptEditor from './TranscriptEditor.svelte';
+  let hasCorrectionEdits = false;
+  const editorDirtyIndices = new Set();
+  const pendingTranslateIndices = new Set();
+
+  async function enqueueTranslations(indices = []){
+    if (Array.isArray(indices)) {
+      indices.forEach((idx) => {
+        if (Number.isInteger(idx)) pendingTranslateIndices.add(idx);
+      });
+    }
+    if (isTranslatingEN) return;
+    if (!pendingTranslateIndices.size) return;
+    const batch = Array.from(pendingTranslateIndices).sort((a, b) => a - b);
+    pendingTranslateIndices.clear();
+    let failed = false;
+    try {
+      await translateWithSync({ indices: batch });
+    } catch (err) {
+      failed = true;
+      console.warn('translateWithSync failed for queued indices', err);
+    }
+    if (failed) batch.forEach((idx) => pendingTranslateIndices.add(idx));
+    if (!failed && pendingTranslateIndices.size) {
+      await enqueueTranslations();
+    }
+  }
+  function onEditorChanged(event){
+    hasCorrectionEdits = true;
+    const dirty = event?.detail?.dirtyIndices;
+    if (Array.isArray(dirty)) {
+      dirty.forEach((idx) => { if (Number.isInteger(idx)) editorDirtyIndices.add(idx); });
+    }
+    refreshImprovements();
+  }
+  import { translateTranscript } from '../api.js';
+  let isTranslatingEN = false;
+
+  function segmentTextFromWords(words){
+    if (!Array.isArray(words) || !words.length) return '';
+    const tokens = words
+      .map((w) => {
+        const corr = (w?.corrected ?? '').toString();
+        const raw = (w?.word ?? '').toString();
+        return (corr || raw).trim();
+      })
+      .filter(Boolean);
+    return tokens.join(' ').replace(/\s+([,.;:!?])/g, '$1');
+  }
+
+  // Build segment.text from word-level corrections so translation reflects edits
+  function rebuildSegmentTextsFromWords(ts){
+    if (!Array.isArray(ts)) return ts;
+    return ts.map((seg)=>{
+      try{
+        const words = Array.isArray(seg?.words) ? seg.words : [];
+        if (!words.length) return seg;
+        const text = segmentTextFromWords(words);
+        return { ...seg, text };
+      }catch{ return seg; }
+    });
+  }
+
+  function applyTranscriptWordChange(segmentIndex, words){
+    const seg = transcript?.[segmentIndex];
+    if (!seg) return;
+    const nextWords = Array.isArray(words) ? words : [];
+    const updated = {
+      ...seg,
+      words: nextWords,
+      text: nextWords.length ? segmentTextFromWords(nextWords) : seg.text
+    };
+    transcript = transcript.map((entry, idx) => (idx === segmentIndex ? updated : entry));
+    return updated;
+  }
+
+  // Ensure unsaved edits are synced server-side before requesting translation
+  function handleTranslateRequest(event){
+    const detail = event?.detail ?? {};
+    if (Array.isArray(detail?.indices)) {
+      detail.indices.forEach((idx) => { if (Number.isInteger(idx)) editorDirtyIndices.add(idx); });
+    }
+    return translateWithSync(detail);
+  }
+
+  async function translateWithSync(options = {}){
+    try{
+      isTranslatingEN = true;
+      let didSave = false;
+      const requested = new Set();
+      if (Array.isArray(options?.indices)) {
+        for (const idx of options.indices){
+          if (Number.isInteger(idx)) requested.add(idx);
+        }
+      }
+      for (const idx of editorDirtyIndices){
+        requested.add(idx);
+      }
+      if (hasCorrectionEdits){
+        const updated = rebuildSegmentTextsFromWords(transcript);
+        transcript = updated;
+        try{ await updateTranscriptData(jobId, transcript); didSave = true; hasCorrectionEdits = false; } catch(e){ console.warn('Failed to save word edits before translate', e); }
+      }
+      if (isEditingTranscript && Object.keys(editedTranscript||{}).length){
+        try { await saveTranscriptEdits(); didSave = true; } catch(e){ console.warn('Failed to save text edits before translate', e); }
+        requested.clear();
+      }
+      const currentTexts = (transcript||[]).map(s => (s?.text ?? ''));
+      if (!Array.isArray(lastSavedTexts) || lastSavedTexts.length !== currentTexts.length){
+        lastSavedTexts = currentTexts.slice();
+      }
+      const diff = [];
+      for (let i=0;i<currentTexts.length;i++){
+        if (currentTexts[i] !== (lastSavedTexts[i] ?? '')) diff.push(i);
+      }
+      diff.forEach((idx)=> requested.add(idx));
+
+      const indices = Array.from(requested).sort((a,b)=>a-b);
+
+      let res;
+      if (indices.length > 0){
+        const payloadTexts = indices.map(i => currentTexts[i] ?? '');
+        res = await translateTranscript(jobId,'en',{ indices, texts: payloadTexts });
+        let updated = false;
+        if (res && Array.isArray(res.indices) && Array.isArray(res.translations)){
+          const base = (Array.isArray(translationsEN) && translationsEN.length === currentTexts.length)
+            ? translationsEN.slice()
+            : new Array(currentTexts.length).fill('');
+          res.indices.forEach((idx, k) => {
+            if (typeof idx === 'number') {
+              const val = res.translations?.[k] || '';
+              if (val.trim()) updated = true;
+              base[idx] = val || base[idx] || '';
+            }
+          });
+          translationsEN = base;
+        } else if (res && Array.isArray(res.translations)) {
+          const out = res.translations.slice(0, currentTexts.length);
+          while (out.length < currentTexts.length) out.push('');
+          updated = out.some((txt) => txt && txt.trim());
+          translationsEN = out;
+        }
+        if (!updated) {
+          try {
+            const fallback = await translateTranscript(jobId,'en');
+            if (fallback && Array.isArray(fallback.translations)) {
+              translationsEN = normalizeTranslationsArray(fallback.translations, currentTexts.length);
+            }
+          } catch (fallbackErr) {
+            console.warn('Fallback translate failed', fallbackErr);
+          }
+        }
+      } else if (!didSave) {
+        res = await translateTranscript(jobId,'en');
+        if (res && Array.isArray(res.translations)) {
+          translationsEN = normalizeTranslationsArray(res.translations, currentTexts.length);
+        }
+      }
+      lastSavedTexts = currentTexts.slice();
+      editorDirtyIndices.clear();
+    } finally {
+      isTranslatingEN = false;
+    }
+  }
+
+  // Map speaker ids → display names and colors for editor
+  $: speakerNames = Object.fromEntries((uniqueSpeakers||[]).map(s => [s, editedMap[s] || s]));
+  $: speakerColors = Object.fromEntries((uniqueSpeakers||[]).map(s => [s, colorForSpeaker(s)]));
+  $: contextTermList = deriveContextTerms(extraContext, contextNamesDetected, proposedMap, editedMap, contextStopwords).filter(isLikelyName);
 
   let audioPlayer;
   let currentWordId = null;
 
   onMount(async () => {
     await fetchReviewData();
+    // Auto-translate preview (preload) on open so the editor shows EN immediately
+    try {
+      await translateWithSync();
+    } catch (e) {
+      console.warn('[ReviewDialog] initial translate failed:', e);
+    } finally { /* state managed in translateWithSync */ }
   });
 
   onDestroy(() => {
@@ -70,8 +602,15 @@
       transcript = data.intermediate_transcript || [];
       proposedMap = data.proposed_map || {};
       contextSnippets = data.context_snippets || {};
+      mergeContextStopwords(Array.isArray(data.context_stopwords) ? data.context_stopwords : []);
+      mergeKnownCorrections(data.known_corrections);
+      if (Array.isArray(data.initial_translations)) {
+        translationsEN = normalizeTranslationsArray(data.initial_translations, (transcript||[]).length);
+      }
+      lastSavedTexts = transcript.map((s) => s?.text ?? '');
+      editorDirtyIndices.clear();
       nameEvidence = data.name_evidence || {};
-      contextNamesDetected = data.context_names_detected || [];
+      contextNamesDetected = (data.context_names_detected || []).filter(isLikelyName);
       extraContext = data.extra_context || '';
       rolesHint = data.roles_hint || {};
       firstSpeakerId = data.first_speaker_id || null;
@@ -88,7 +627,11 @@
         initialContextVisible[id] = false;
         initialWhyVisible[id] = false;
       });
-      
+
+      const derivedTerms = deriveContextTerms(extraContext, contextNamesDetected, proposedMap, initialEditedMap, contextStopwords);
+      applyContextCorrectionsToTranscript(transcript, derivedTerms);
+      transcript = rebuildSegmentTextsFromWords(transcript);
+
       // Fallback: if no LLM suggestion, try extracting names from greetings
       greetingCache = greetingMatches();
       greetingCache.forEach(({ speaker, name }) => {
@@ -100,6 +643,8 @@
       contextVisible = initialContextVisible;
       whyVisible = initialWhyVisible;
 
+      refreshImprovements();
+
     } catch (e) {
       console.error('[ReviewDialog] Fetch review data failed:', e);
       error = `Fout bij laden review data: ${e.message}`;
@@ -108,8 +653,13 @@
     }
   }
 
-  function toggleContext(speakerId) {
+  async function toggleContext(speakerId) {
     contextVisible[speakerId] = !contextVisible[speakerId];
+    if (contextVisible[speakerId]) {
+      await tick();
+      const el = document.getElementById(`context-${speakerId}`);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   }
 
   function assignNameToSpeaker(name, speakerId){
@@ -158,13 +708,158 @@
     rebuildSpeakerStats();
   }
 
+  const GREETING_PREFIXES = ['hallo','hoi','hey','dag','goedemiddag','goedenavond','goedemorgen','hi','hello'];
+  const INTRO_PHRASES = ['ik ben','dit is','mijn naam is','je spreekt met','u spreekt met','this is','i am',"i'm",'you are speaking with',"you're speaking with"];
+  const WITH_LINKERS = ['met','with'];
+  const fallbackNameHints = new Map();
+
+  function normalizeLoose(value){
+    if (!value && value !== 0) return '';
+    return value.toString().trim().toLowerCase();
+  }
+
+  function cleanForMatch(value){
+    let s = normalizeLoose(value);
+    [',', '.', '!', '?', ':', ';', "\n", "\t"].forEach((ch) => {
+      s = s.split(ch).join(' ');
+    });
+    return s.split(' ').filter(Boolean).join(' ');
+  }
+
+  function nameVariantsForSpeaker(sid){
+    const variants = new Set();
+    const direct = normalizeLoose(editedMap[sid]);
+    if (direct) {
+      variants.add(direct);
+      const parts = direct.split(' ');
+      if (parts.length > 1) variants.add(parts[0]);
+    }
+    const proposed = normalizeLoose(proposedMap[sid]?.name);
+    if (proposed && proposed !== direct) {
+      variants.add(proposed);
+      const parts = proposed.split(' ');
+      if (parts.length > 1) variants.add(parts[0]);
+    }
+    if (!variants.size && fallbackNameHints.has(sid)) {
+      const hint = normalizeLoose(fallbackNameHints.get(sid));
+      if (hint) {
+        variants.add(hint);
+        const parts = hint.split(' ');
+        if (parts.length > 1) variants.add(parts[0]);
+      }
+    }
+    return Array.from(variants);
+  }
+
+  function detectIntroSpeaker(text, candidateIds){
+    if (!text) return null;
+    const line = cleanForMatch(text);
+    for (const sid of candidateIds){
+      const variants = nameVariantsForSpeaker(sid);
+      if (!variants.length) continue;
+      for (const name of variants){
+        if (!name) continue;
+        for (const phrase of INTRO_PHRASES){
+          const seq = `${phrase} ${name}`;
+          if (line.includes(seq)) return sid;
+        }
+        for (const linker of WITH_LINKERS){
+          const seq = `${linker} ${name}`;
+          if (line.includes(seq)) return sid;
+        }
+      }
+    }
+    return null;
+  }
+
+  function detectGreetingSpeaker(text, candidateIds){
+    if (!text) return null;
+    const line = cleanForMatch(text);
+    const startsGreeting = GREETING_PREFIXES.some((prefix) => line.startsWith(prefix));
+    if (!startsGreeting) return null;
+    for (const sid of candidateIds){
+      const variants = nameVariantsForSpeaker(sid);
+      if (!variants.length) continue;
+      for (const name of variants){
+        if (name && line.includes(name)) return sid;
+      }
+    }
+    return null;
+  }
+
+  function applyTwoSpeakerHeuristics(keptIds){
+    if (!Array.isArray(keptIds) || keptIds.length !== 2) return false;
+    const [speakerA, speakerB] = keptIds;
+    fallbackNameHints.clear();
+    greetingCache.forEach(({ speaker, name }) => {
+      const target = speaker === speakerA ? speakerB : speakerA;
+      if (typeof name === 'string' && !fallbackNameHints.has(target)) {
+        fallbackNameHints.set(target, name);
+      }
+    });
+    const contextFallbacks = (contextNamesDetected || []).map((n) => normalizeLoose(n)).filter(Boolean);
+    if (!fallbackNameHints.has(speakerA) && contextFallbacks.length) fallbackNameHints.set(speakerA, contextFallbacks[0]);
+    if (!fallbackNameHints.has(speakerB) && contextFallbacks.length > 1) fallbackNameHints.set(speakerB, contextFallbacks[1]);
+
+    let changed = false;
+    const lookahead = Math.min(transcript.length, 12);
+    for (let i = 0; i < lookahead; i++){
+      const seg = transcript[i];
+      if (!seg || !seg.text) continue;
+      const variantTexts = [];
+      const raw = normalizeLoose(seg.text);
+      if (raw) variantTexts.push(raw);
+      if (Array.isArray(translationsEN) && typeof translationsEN[i] === 'string'){
+        const tr = normalizeLoose(translationsEN[i]);
+        if (tr && !variantTexts.includes(tr)) variantTexts.push(tr);
+      }
+      let resolvedSpeaker = null;
+      for (const candidateText of variantTexts){
+        if (!candidateText) continue;
+        const introMatch = detectIntroSpeaker(candidateText, keptIds);
+        if (introMatch){
+          resolvedSpeaker = introMatch;
+          break;
+        }
+      }
+      if (!resolvedSpeaker){
+        for (const candidateText of variantTexts){
+          if (!candidateText) continue;
+          const greeted = detectGreetingSpeaker(candidateText, keptIds);
+          if (greeted){
+            // Greeting mentions the other speaker → actual speaker is the opposite id
+            resolvedSpeaker = greeted === speakerA ? speakerB : speakerA;
+            break;
+          }
+        }
+      }
+      if (resolvedSpeaker && seg.speaker !== resolvedSpeaker){
+        transcript[i].speaker = resolvedSpeaker;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
   function consolidateToExpected(){
     const n = Math.max(1, parseInt(expectedSpeakers||2,10));
     const counts = {};
     transcript.forEach(s=>{ if(s?.speaker) counts[s.speaker]=(counts[s.speaker]||0)+1; });
     const sorted = Object.entries(counts).sort((a,b)=>b[1]-a[1]).map(([sid])=>sid);
     const keep = new Set(sorted.slice(0,n));
-    const kept = Array.from(keep);
+    let kept = Array.from(keep);
+    if (kept.length === 2){
+      const applied = applyTwoSpeakerHeuristics(kept);
+      if (applied){
+        hasSpeakerAssignmentChanges = true;
+        const recompute = {};
+        transcript.forEach(s=>{ if(s?.speaker) recompute[s.speaker]=(recompute[s.speaker]||0)+1; });
+        const resort = Object.entries(recompute).sort((a,b)=>b[1]-a[1]).map(([sid])=>sid);
+        keep.clear();
+        resort.slice(0,n).forEach((sid)=>keep.add(sid));
+        kept = Array.from(keep);
+      }
+    }
     const windowK = 2;
     for (let i=0;i<transcript.length;i++){
       const sid = transcript[i]?.speaker; if(!sid || keep.has(sid)) continue;
@@ -216,6 +911,7 @@
     rebuildSpeakerStats();
     computeConsolidationHints();
   }
+  let translationsEN = [];
 
   const iconSize = 14;
   const iconColor = '#60a5fa';
@@ -298,10 +994,26 @@
     try { transcriptContainer && (transcriptContainer.scrollTop = 0); } catch {}
   }
 
+  async function reRunNameDetection(){
+    try {
+      const resp = await reDetectNames(jobId);
+      if (resp && resp.proposed_map) {
+        proposedMap = resp.proposed_map || {};
+        contextSnippets = resp.context_snippets || {};
+        // Vul enkel lege velden bij
+        Object.keys(proposedMap).forEach((id) => { if (!editedMap[id]) editedMap[id] = proposedMap[id]?.name ?? ''; });
+      }
+    } catch (e) {
+      console.warn('[ReviewDialog] reRunNameDetection failed:', e);
+      error = 'Kon speaker detectie niet herstarten';
+    }
+  }
+
   async function saveTranscriptEdits() {
     isLoading = true;
     error = '';
     try {
+      const prevTexts = transcript.map((segment) => segment?.text ?? '');
       const updatedFullTranscript = transcript.map((segment, index) => ({
         ...segment,
         text: editedTranscript[index] ?? segment.text,
@@ -317,10 +1029,50 @@
           firstNChanged = true; break;
         }
       }
+      const changedIndices = [];
+      updatedFullTranscript.forEach((seg, idx) => {
+        const newText = seg?.text ?? '';
+        if (newText !== (prevTexts[idx] ?? '')){
+          changedIndices.push(idx);
+        }
+      });
       await updateTranscriptData(jobId, updatedFullTranscript);
       transcript = updatedFullTranscript;
+      lastSavedTexts = transcript.map(s => (s?.text ?? ''));
+      refreshImprovements();
       greetingCache = greetingMatches();
       isEditingTranscript = false;
+      // Refresh English translations after content changes
+      if (changedIndices.length){
+        try {
+          const payloadTexts = changedIndices.map((idx) => transcript[idx]?.text ?? '');
+          const res = await translateTranscript(jobId, 'en', { indices: changedIndices, texts: payloadTexts });
+          let updated = false;
+          if (res && Array.isArray(res.indices) && Array.isArray(res.translations)){
+            const base = normalizeTranslationsArray(translationsEN, transcript.length);
+            res.indices.forEach((idx, k) => {
+              if (typeof idx === 'number') {
+                const val = res.translations?.[k] || '';
+                if (val.trim()) updated = true;
+                base[idx] = val || base[idx] || '';
+              }
+            });
+            translationsEN = base;
+          } else if (res && Array.isArray(res.translations)) {
+            const normalized = normalizeTranslationsArray(res.translations, transcript.length);
+            updated = normalized.some((txt) => txt && txt.trim());
+            translationsEN = normalized;
+          }
+          if (!updated) {
+            const fallback = await translateTranscript(jobId, 'en');
+            if (fallback && Array.isArray(fallback.translations)) {
+              translationsEN = normalizeTranslationsArray(fallback.translations, transcript.length);
+            }
+          }
+        } catch (e) {
+          console.warn('[ReviewDialog] translate after save failed:', e);
+        }
+      }
       // If early segments changed, re-run name detection to refresh suggestions
       if (firstNChanged) {
         try {
@@ -373,8 +1125,34 @@
     isSaving = true;
     error = '';
     try {
-      if (hasSpeakerAssignmentChanges) {
+      if (hasSpeakerAssignmentChanges || hasCorrectionEdits) {
         await saveSpeakerAssignmentsIfNeeded();
+        if (hasCorrectionEdits) {
+          // Auto-confirm all corrected words so Part 2 materializes them
+          try {
+            for (const seg of transcript){
+              if (!seg || !Array.isArray(seg.words)) continue;
+              for (const w of seg.words){
+                if (w && w.corrected && (!w.flags || !w.flags.confirmed)){
+                  w.flags = { ...(w.flags||{}), confirmed: true };
+                }
+              }
+            }
+          } catch {}
+          refreshImprovements();
+          // Keep segment.text in sync with corrected words before saving
+          transcript = rebuildSegmentTextsFromWords(transcript);
+          try { await updateTranscriptData(jobId, transcript); } catch (e) { console.warn('Failed saving editor corrections', e); }
+          lastSavedTexts = transcript.map((s) => s?.text ?? '');
+          // After saving word-level corrections, refresh translations as well
+          try {
+            const res = await translateTranscript(jobId,'en');
+            if(res && Array.isArray(res.translations)){
+              translationsEN = normalizeTranslationsArray(res.translations, transcript.length);
+            }
+          } catch {}
+          hasCorrectionEdits = false;
+        }
       }
       if (isEditingTranscript && Object.keys(editedTranscript).length) {
         console.log('[ReviewDialog] Transcript is being edited, saving transcript first...');
@@ -422,7 +1200,7 @@
         for (let j = 0; j < segment.words.length; j++) {
           const word = segment.words[j];
           if (word.start !== undefined && word.end !== undefined && currentTime >= word.start && currentTime < word.end) {
-            foundWordId = `word-${i}-${j}`;
+            foundWordId = `w-${i}-${j}`;
             break;
           }
         }
@@ -448,103 +1226,82 @@
 </script>
 
 <div class="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
-  <div class="rounded-xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl" style="background-color: rgb(var(--page)); color: rgb(var(--text)); border: 1px solid rgb(var(--border));">
+  <div class="rounded-xl w-full max-w-6xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl" style="background-color: rgb(var(--page)); color: rgb(var(--text)); border: 1px solid rgb(var(--border));">
     <header class="flex justify-between items-center p-4" style="border-bottom: 1px solid rgb(var(--border));">
       <div class="flex items-center gap-4">
         <h2 class="text-lg font-semibold">Speaker & Transcript Review</h2>
         <div class="flex items-center gap-2 text-sm">
-          <label for="expected-speakers" class="muted">Verwacht aantal sprekers</label>
+          <label for="expected-speakers" class="muted">Expected number of speakers</label>
           <input id="expected-speakers" type="number" min="1" class="w-20 px-2 py-1 rounded" bind:value={expectedSpeakers}>
-          <button class="btn btn-ghost text-xs px-2 py-1" on:click={consolidateToExpected} disabled={isLoading}>Consolideer</button>
-          <button class="btn btn-ghost text-xs px-2 py-1" on:click={toggleAssignSpeakers} aria-pressed={isAssigningSpeakers}>{isAssigningSpeakers ? 'Stop toewijzen' : 'Wijs sprekers toe'}</button>
+          <button class="btn btn-ghost text-xs px-2 py-1" on:click={consolidateToExpected} disabled={isLoading}>Consolidate</button>
+          <button class="btn btn-ghost text-xs px-2 py-1" on:click={toggleAssignSpeakers} aria-pressed={isAssigningSpeakers}>{isAssigningSpeakers ? 'Stop assigning' : 'Assign speakers'}</button>
         </div>
       </div>
       <button on:click={cancelReview} disabled={isSaving} class="text-2xl muted hover:opacity-70 disabled:opacity-50 transition-opacity">&times;</button>
     </header>
 
-    <main class="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+    <main class="flex-1 overflow-hidden p-6 custom-scrollbar">
       {#if isLoading && !isSaving}
         <div class="flex justify-center items-center h-full">
-          <p class="text-gray-400 text-lg">Review data laden…</p>
+          <p class="text-gray-400 text-lg">Loading review data…</p>
         </div>
       {:else if error}
         <div class="p-4 rounded border" style="border-color: rgb(239 68 68); background: rgba(239,68,68,0.08); color: rgb(127 29 29);">
-          <strong class="block mb-2">Fout:</strong>
+          <strong class="block mb-2">Error:</strong>
           <p class="mb-3">{error}</p>
           {#if !isSaving}
             <button on:click={fetchReviewData}
               class="btn btn-ghost text-sm">
-              Opnieuw proberen
+              Try again
             </button>
           {/if}
         </div>
       {/if}
 
       {#if !isLoading || error}
-        <fieldset disabled={isSaving || (isLoading && !error)} class="space-y-6">
-          {#if audioSrc}
-            <section>
-              <audio
-                bind:this={audioPlayer}
-                controls
-                class="w-full"
-                preload="metadata"
-                on:timeupdate={handleTimeUpdate}
-                src={audioSrc}
-              >
-                Your browser does not support the audio element.
-              </audio>
-            </section>
-          {/if}
+        <fieldset disabled={isSaving || (isLoading && !error)}>
+          <div class="review-grid">
+            <div class="col-left custom-scrollbar">
 
           <section>
-            <div class="flex items-center justify-between mb-3">
-              <h3 class="text-xl font-semibold">Spreker Namen Toewijzen</h3>
-              <div class="flex items-center gap-2 flex-wrap">
+            <div class="assign-head">
+              <h3 class="text-xl font-semibold">Assign Speaker Names</h3>
+              <div class="tools flex items-center gap-2 flex-wrap">
                 {#each uniqueSpeakers as sid (sid)}
-                  <button type="button" class="chip" style={`color:${colorForSpeaker(sid)}; border-color:${colorForSpeaker(sid)};`} on:click={() => scrollToNextFor(sid)} title="Scroll naar volgende voorkomen">
+                  <button type="button" class="chip" style={`color:${colorForSpeaker(sid)}; border-color:${colorForSpeaker(sid)};`} on:click={() => scrollToNextFor(sid)} title="Scroll to next occurrence">
                     {sid} · {speakerCounts[sid] || 0}
                   </button>
                 {/each}
                 {#if uniqueSpeakers.length === 2}
                   <button type="button" on:click={swapNames}
                     class="btn btn-ghost text-xs px-2 py-1"
-                    title="Wissel namen tussen de twee sprekers">
-                    ⇄ Wissel
+                    title="Swap names between the two speakers">
+                    ⇄ Swap
                   </button>
                 {/if}
               </div>
             </div>
             {#if extraContext}
-              <div class="mb-3 text-sm">
+                <div class="mb-3 text-sm">
                 <div class="opacity-80">Extra context:</div>
                 <div class="mt-1 p-2 rounded whitespace-pre-wrap" style="border: 1px solid rgb(var(--border)); background-color: rgb(var(--page));">{extraContext}</div>
                 {#if contextNamesDetected && contextNamesDetected.length}
-                  <div class="mt-2 text-xs muted">Gedetecteerde namen: {#each contextNamesDetected as nm, i}<span class="font-semibold">{nm}</span>{i<contextNamesDetected.length-1?', ':''}{/each}</div>
+                  <div class="mt-2 text-xs muted">Detected names: {#each contextNamesDetected as nm, i}<span class="font-semibold">{nm}</span>{i<contextNamesDetected.length-1?', ':''}{/each}</div>
                 {/if}
               </div>
             {/if}
-            {#if consolidationHints.length}
-              <div class="mb-3 text-xs space-y-2">
-                {#each consolidationHints as h (`${h.fromSid}-${h.toSid}`)}
-                  <div class="flex items-center gap-2 rounded px-2 py-1" style="border: 1px solid rgb(var(--border));">
-                    <span class="font-mono" style={`color:${colorForSpeaker(h.fromSid)}`}>{h.fromSid}</span>
-                    <span class="opacity-70">→</span>
-                    <span class="font-mono" style={`color:${colorForSpeaker(h.toSid)}`}>{h.toSid}</span>
-                    <span class="opacity-80">· {Math.round(h.avgConfidence*100)}% zeker · {h.count} zinnen</span>
-                    <button class="btn btn-ghost text-xs px-2 py-0.5" on:click={() => { const i=h.indices[0]; const el=document.getElementById(`seg-${i}`); el?.scrollIntoView({behavior:'smooth', block:'start'}); }}>Ga naar</button>
-                    <button class="btn btn-primary text-xs px-2 py-0.5" on:click={() => applyHint(h)}>Pas toe</button>
-                  </div>
-                {/each}
-              </div>
+            {#if false}
+              <!-- Consolidation hints intentionally hidden as requested -->
             {/if}
             {#if uniqueSpeakers.length === 0 && !isLoading}
-                <p class="text-gray-400">Geen sprekers geïdentificeerd in dit transcript.</p>
+                <p class="text-gray-400">No speakers identified in this transcript.</p>
             {/if}
             <div class="space-y-4">
               {#each uniqueSpeakers as speakerId (speakerId)}
-                <div class="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-3">
-                  <label for={`speaker-name-${speakerId}`} class="w-full sm:w-32 font-mono text-sm shrink-0 flex items-center gap-2" style={`color:${colorForSpeaker(speakerId)}`}>{speakerId}:
+                <div class="spk-row flex flex-col gap-2">
+                  <div class="spk-title text-xs font-mono opacity-70" style={`color:${colorForSpeaker(speakerId)}`}>{speakerId}</div>
+                  <div class="spk-line flex items-center gap-2">
+                  <label for={`speaker-name-${speakerId}`} class="w-28 text-xs shrink-0 flex items-center gap-2" style={`color:${colorForSpeaker(speakerId)}`}></label>
                     {#if roleForSpeaker(speakerId) === 'caller'}
                       {@html PhoneOutgoing()}<span class="text-xs text-blue-400">caller</span>
                     {:else if roleForSpeaker(speakerId) === 'callee'}
@@ -552,30 +1309,32 @@
                     {:else if roleForSpeaker(speakerId) === 'caller?'}
                       {@html PhoneOutgoing()}<span class="text-xs text-blue-400">caller?</span>
                     {/if}
-                  </label>
+                  </div>
                   <input
                     id={`speaker-name-${speakerId}`}
                     type="text"
                     bind:value={editedMap[speakerId]}
-                    placeholder={proposedMap[speakerId]?.name ? `Voorgesteld: ${proposedMap[speakerId].name}` : 'Naam invoeren...'}
+                    placeholder={proposedMap[speakerId]?.name ? `Suggested: ${proposedMap[speakerId].name}` : 'Enter name...'}
                     class="flex-grow p-2 rounded w-full {isLikelyName(editedMap[speakerId]) ? '' : ''}"
                   />
                   {#if proposedMap[speakerId]?.confidence !== undefined}
                     <span class="text-xs text-gray-400">{Math.round((proposedMap[speakerId].confidence||0)*100)}%</span>
                   {/if}
-                  <button type="button" class="btn btn-ghost text-xs px-2 py-1" on:click={() => whyVisible[speakerId]=!whyVisible[speakerId]}>Waarom?</button>
-                  {#if proposedMap[speakerId]?.reasoning_indices?.length}
-                    <button
-                      type="button"
-                      on:click={() => toggleContext(speakerId)}
-                      class="btn btn-ghost text-sm w-full sm:w-auto"
-                    >
-                      {#if contextVisible[speakerId]}Verberg context{:else}Toon context{/if}
-                    </button>
-                  {/if}
+                  <div class="spk-actions">
+                    <button type="button" class="btn btn-ghost text-xs px-2 py-1" on:click={() => whyVisible[speakerId]=!whyVisible[speakerId]}>Why?</button>
+                    {#if proposedMap[speakerId]?.reasoning_indices?.length}
+                      <button
+                        type="button"
+                        on:click={() => toggleContext(speakerId)}
+                        class="btn btn-ghost text-xs px-2 py-1"
+                      >
+                        {#if contextVisible[speakerId]}Hide context{:else}Show context{/if}
+                      </button>
+                    {/if}
+                  </div>
                   {#if contextNamesDetected && contextNamesDetected.length}
                     {#each contextNamesDetected as nm (nm)}
-                      <button type="button" class="btn btn-ghost text-xs px-2 py-1" on:click={() => assignNameToSpeaker(nm, speakerId)}>Koppel ‘{nm}’</button>
+                      <button type="button" class="btn btn-ghost text-xs px-2 py-1" on:click={() => assignNameToSpeaker(nm, speakerId)}>Assign ‘{nm}’</button>
                     {/each}
                   {/if}
                 </div>
@@ -583,7 +1342,7 @@
                   <pre class="mt-2 p-2 rounded text-xs whitespace-pre-wrap" style="border: 1px solid rgb(var(--border)); background-color: rgb(var(--page));">{whyFor(speakerId)}</pre>
                 {/if}
                 {#if contextVisible[speakerId]}
-                  <pre class="p-3 rounded text-xs overflow-auto max-h-40 custom-scrollbar whitespace-pre-wrap" style="border: 1px solid rgb(var(--border)); background-color: rgb(var(--page));">{getRelevantContext(speakerId)}</pre>
+                  <pre id={`context-${speakerId}`} class="p-3 rounded text-xs overflow-auto max-h-40 custom-scrollbar whitespace-pre-wrap" style="border: 1px solid rgb(var(--border)); background-color: rgb(var(--page));">{getRelevantContext(speakerId)}</pre>
                 {/if}
               {/each}
             </div>
@@ -594,7 +1353,7 @@
                   {#each nameEvidence.name_mentions as ev, ei}
                     <li>
                       <button class="underline hover:text-blue-300" type="button" on:click={() => { const el = document.getElementById(`seg-${ev.index}`); el?.scrollIntoView({behavior:'smooth', block:'start'}); }}>
-                        Ga naar segment {ev.index}
+                        Go to segment {ev.index}
                       </button>
                       <span class="opacity-70"> — {ev.snippet?.split('\n')[0] || '(snippet)'} </span>
                     </li>
@@ -603,104 +1362,109 @@
               </div>
             {/if}
           </section>
-
-          <section>
-              <div class="flex justify-between items-center mb-3">
-              <h3 class="text-xl font-semibold">Transcript</h3>
-              {#if transcript.length > 0}
-              <button
-                type="button"
-                on:click={isEditingTranscript ? saveTranscriptEdits : toggleEditTranscript}
-                disabled={isLoading && isEditingTranscript}
-                class="btn btn-primary text-sm"
-              >
-                {#if isEditingTranscript}
-                  {#if isLoading}Opslaan...{:else}Transcriptie Opslaan{/if}
-                {:else}
-                  Edit Transcriptie
-                {/if}
-              </button>
-              {/if}
-              </div>
-            {#if transcript.length === 0 && !isLoading}
-                <p class="text-gray-400">Geen transcript beschikbaar.</p>
-            {/if}
-            <div bind:this={transcriptContainer} class="p-4 rounded-lg max-h-96 overflow-y-auto text-base custom-scrollbar" style="background-color: rgb(var(--page)); color: rgb(var(--text)); border: 1px solid rgb(var(--border));">
-              {#each transcript as segment, i (segment.id || i)}
-                <div class="mb-4" id={`seg-${i}`} data-speaker={segment.speaker}>
-                  <div class="flex items-start gap-2">
-                    <strong style={`color:${colorForSpeaker(segment.speaker)}`}>{editedMap[segment.speaker] || segment.speaker}:</strong>
-                    {#if isAssigningSpeakers}
-                      <select class="text-xs rounded px-1 py-0.5" bind:value={segment.speaker} on:change={(e)=>setSegmentSpeaker(i, e.target.value)}>
-                        {#each uniqueSpeakers as sid (sid)}
-                          <option value={sid}>{sid}</option>
-                        {/each}
-                      </select>
-                    {/if}
-                  </div>
-                  {#if isEditingTranscript}
-                    <textarea
-                      rows="3"
-                      class="w-full mt-1 p-2 rounded"
-                      bind:value={editedTranscript[i]}
-                      aria-label={`Transcript segment ${i+1} by speaker ${editedMap[segment.speaker] || segment.speaker}`}
-                    ></textarea>
-                  {:else}
-                    <p class="mt-1 whitespace-pre-wrap leading-relaxed transcript-text">
-                      {#if Array.isArray(segment.words) && segment.words.length}
-                        {#each segment.words as word, j (`word-${i}-${j}`)}
-                          <span
-                            id={`word-${i}-${j}`}
-                            role="button"
-                            tabindex={word.start !== undefined ? 0 : -1}
-                            class="word-span"
-                            class:namehit={isNameToken(word.word)}
-                            class:highlight={currentWordId === `word-${i}-${j}`}
-                            class:clickable={word.start !== undefined}
-                            on:click={() => handleWordClick(word)}
-                            on:keydown={(event) => handleWordKeydown(event, word)}
-                            aria-label={`Woord: ${word.word}, ${word.start !== undefined ? `start op ${word.start.toFixed(2)}s` : 'tijdstip onbekend'}`}
-                          >{word.word}</span>
-                        {/each}
-                      {:else}
-                        {segment.text || '(Leeg segment)'}
-                      {/if}
-                    </p>
-                  {/if}
-                </div>
-              {/each}
             </div>
+            <div class="col-right custom-scrollbar">
+          <section>
+            <div class="section-head">
+              <h3 class="text-xl font-semibold">Transcript Editor</h3>
+              <p class="muted text-sm">Woord‑nauwkeurige sync, contextuele voorstellen en review‑navigatie. Gebruik ←/→/Enter.</p>
+            </div>
+            {#if improvements.length}
+              <div class="improvements-panel">
+                <div class="improvements-head">
+                  <h4 class="text-sm font-semibold uppercase tracking-wide">Verbeteringen</h4>
+                  <span class="count">{improvements.length}</span>
+                </div>
+                <ul class="improvements-list">
+                  {#each improvements as item}
+                    <li class="improvement-row">
+                      <button type="button" class="improvement-btn" on:click={() => focusImprovement(item)}>
+                        <span class="imp-speaker" style={`color:${speakerColors[item.speaker]||'#60a5fa'}`}>{speakerNames[item.speaker] || item.speaker}</span>
+                        <span class="imp-change">{item.from} → {item.to}</span>
+                        {#if item.flags?.suggestedByContext}
+                          <span class="badge badge-context">context</span>
+                        {/if}
+                        <span class="badge {item.flags?.confirmed ? 'badge-confirmed' : 'badge-open'}">{item.flags?.confirmed ? 'bevestigd' : 'open'}</span>
+                      </button>
+                      <div class="improvement-actions">
+                        <button
+                          type="button"
+                          class="btn-pill btn-pill--confirm"
+                          on:click={async (event) => { event.stopPropagation(); await confirmImprovement(item); }}
+                        >
+                          <span class="icon" aria-hidden="true">✓</span>
+                          <span>Bevestig</span>
+                        </button>
+                        <button
+                          type="button"
+                          class="btn-pill btn-pill--reject"
+                          on:click={async (event) => { event.stopPropagation(); await rejectImprovement(item); }}
+                        >
+                          <span class="icon" aria-hidden="true">✕</span>
+                          <span>Weiger</span>
+                        </button>
+                      </div>
+                    </li>
+                  {/each}
+                </ul>
+              </div>
+            {/if}
+            <div class="editor-head-actions">
+              <button class="btn btn-ghost text-xs px-2 py-1" title="Re-run speaker detection" on:click={reRunNameDetection}>↻ Re-detect names</button>
+              <button
+                class="btn btn-ghost text-xs px-2 py-1"
+                title="Translate view (EN)"
+                on:click={() => translateWithSync()}
+                disabled={isTranslatingEN}
+              >{isTranslatingEN ? 'Translating…' : 'Translate (preload)'}</button>
+            </div>
+            <TranscriptEditor
+              {transcript}
+              {audioRelativePath}
+              {speakerNames}
+              {speakerColors}
+              bind:audioElement={audioPlayer}
+              speakerIds={uniqueSpeakers}
+              contextSpeakers={Object.keys(contextVisible||{}).filter(k=>contextVisible[k])}
+              contextTerms={contextTermList}
+              externalTranslations={translationsEN}
+              on:changed={onEditorChanged}
+              on:requestTranslate={handleTranslateRequest}
+            />
           </section>
+            </div>
+          </div>
+
+          
         </fieldset>
       {/if}
     </main>
 
-    <footer class="flex justify-end items-center p-4 space-x-3" style="border-top: 1px solid rgb(var(--border));">
+    <footer class="flex justify-between items-center p-3 px-4 gap-3" style="border-top: 1px solid rgb(var(--border));">
+      <div class="footer-legend muted text-sm">
+        Legende: <span class="chip-live" style="background:#94a3b8"></span> huidig · <span class="chip-corr">vakje</span> voorstel
+      </div>
+      <div class="flex items-center gap-3">
       <button
         on:click={cancelReview}
         disabled={isSaving}
         class="btn btn-ghost"
       >
-        Annuleren
+        Cancel
       </button>
       <button
         on:click={saveAll}
         disabled={isLoading || isSaving || (uniqueSpeakers.length === 0 && transcript.length === 0)}
         class="btn btn-primary"
       >
-        {#if isSaving}Opslaan…{:else}Bevestigen &amp; Doorgaan{/if}
+        {#if isSaving}Saving…{:else}Confirm &amp; Continue{/if}
       </button>
+      </div>
     </footer>
   </div>
 </div>
 
 <style>
-  .highlight {
-    background-color: #2563eb; /* Tailwind's blue-600 */
-    color: white;
-    padding: 1px 3px;
-    border-radius: 3px;
-  }
   .custom-scrollbar::-webkit-scrollbar {
     width: 8px;
     height: 8px;
@@ -715,24 +1479,37 @@
   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
     background: #6b7280; /* Tailwind's gray-500 */
   }
-  .word-span.clickable {
-    cursor: pointer;
-  }
-  /* Avoid horizontal scroll and keep natural wrapping */
-  .transcript-text { overflow-wrap: anywhere; word-break: break-word; }
   .custom-scrollbar { overflow-x: hidden; }
-  .word-span { display: inline-block; margin-right: 0.25em; }
-  .word-span.clickable:hover,
-  .word-span.clickable:focus {
-    text-decoration: underline;
-    outline: 1px dashed #60a5fa; /* Tailwind's blue-400, of een andere focus indicator */
-    outline-offset: 1px;
+  .review-grid { display: flex; align-items: stretch; gap: 20px; height: 100%; }
+  .review-grid .col-left { flex: 0 0 400px; max-width: 460px; overflow-y: auto; padding-right: 4px; display: flex; flex-direction: column; gap: 14px; }
+  .review-grid .col-right { flex: 1 1 auto; overflow-y: auto; padding-left: 4px; }
+  .review-grid .col-left section, .review-grid .col-right section {
+    border: 1px solid rgb(var(--border)); border-radius: 10px; padding: 12px;
+    background: rgb(var(--page)); color: rgb(var(--text));
   }
-  .word-span.namehit {
-    background-color: rgba(34,197,94,0.2); /* green-500 alpha */
-    border-radius: 3px;
-  }
-  .word-span:focus {
-    outline: none; /* Verwijder default browser outline als we onze eigen focus style hebben */
-  }
+  .assign-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .spk-row { border: 1px dashed rgb(var(--border)); border-radius: 10px; padding: 10px; }
+  .footer-legend .chip-live { display: inline-block; width: 18px; height: 10px; border-radius: 4px; margin: 0 4px; vertical-align: middle; }
+  .spk-actions { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-left: 4px; }
+  .editor-head-actions { display:flex; justify-content:flex-end; margin: 4px 0 8px; }
+  .improvements-panel { border: 1px dashed rgb(var(--border)); border-radius: 10px; padding: 10px; margin-bottom: 12px; background: rgba(148, 163, 184, 0.08); }
+  .improvements-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+  .improvements-head .count { font-size: 0.75rem; background: rgba(148, 163, 184, 0.35); padding: 2px 6px; border-radius: 9999px; }
+  .improvements-list { display:flex; flex-direction:column; gap:6px; max-height:180px; overflow:auto; }
+  .improvement-btn { width:100%; text-align:left; display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:0.9rem; padding:6px 8px; border:1px solid transparent; border-radius:8px; background:rgba(15,23,42,0.02); color:inherit; }
+  .improvement-btn:hover { border-color: rgba(148, 163, 184, 0.6); background: rgba(148, 163, 184, 0.16); }
+  .imp-speaker { font-weight:600; }
+  .imp-change { flex:1; min-width:150px; }
+  .improvement-actions { display:flex; gap:6px; }
+  .btn-pill { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:9999px; border:1px solid rgba(148, 163, 184, 0.4); background:transparent; color:inherit; font-size:0.75rem; }
+  .btn-pill:hover { border-color: rgba(148, 163, 184, 0.8); background: rgba(148, 163, 184, 0.12); }
+  .btn-pill--confirm { border-color: rgba(34, 197, 94, 0.6); color: #22c55e; }
+  .btn-pill--confirm:hover { background: rgba(34, 197, 94, 0.15); }
+  .btn-pill--reject { border-color: rgba(248, 113, 113, 0.6); color: #f87171; }
+  .btn-pill--reject:hover { background: rgba(248, 113, 113, 0.18); }
+  .btn-pill .icon { display:inline-flex; align-items:center; justify-content:center; font-size:0.85rem; }
+  .badge { font-size:0.65rem; padding:2px 6px; border-radius:9999px; text-transform:uppercase; letter-spacing:0.05em; }
+  .badge-context { background:#f97316; color:white; }
+  .badge-open { background:#facc15; color:#1f2937; }
+  .badge-confirmed { background:#22c55e; color:white; }
 </style>
